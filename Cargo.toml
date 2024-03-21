@@ -58,6 +58,7 @@ test-dev-graph = [
 circuit-params = ["halo2_proofs/circuit-params"]
 test-dependencies = ["proptest"]
 unstable = []
+multicore = ["halo2_proofs/multicore"]
 
 [[bench]]
 name = "poseidon"
