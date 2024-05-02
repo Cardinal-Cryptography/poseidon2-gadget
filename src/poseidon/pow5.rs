@@ -31,9 +31,6 @@ pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
     half_partial_rounds: usize,
     alpha: [u64; 4],
     round_constants: Vec<[F; WIDTH]>,
-    m_reg: Mds<F, WIDTH>,
-    #[allow(dead_code)]
-    m_inv: Mds<F, WIDTH>,
 }
 
 /// A Poseidon chip using an $x^5$ S-Box.
@@ -69,7 +66,7 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         assert!(S::partial_rounds() & 1 == 0);
         let half_full_rounds = S::full_rounds() / 2;
         let half_partial_rounds = S::partial_rounds() / 2;
-        let (round_constants, m_reg, m_inv) = S::constants();
+        let (round_constants, _, _) = S::constants();
 
         // This allows state words to be initialized (by constraining them equal to fixed
         // values), and used in a permutation from an arbitrary region. rc_a is used in
@@ -199,8 +196,6 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             half_partial_rounds,
             alpha,
             round_constants,
-            m_reg,
-            m_inv,
         }
     }
 
@@ -240,6 +235,27 @@ impl<F: Field, S: Spec<F, WIDTH, RATE>, const WIDTH: usize, const RATE: usize>
             |mut region| {
                 // Load the initial state into this region.
                 let state = Pow5State::load(&mut region, config, initial_state)?;
+
+                let state = Pow5State::round(&mut region, config, 0, 0, config.s_full, |_| {
+                    let r: Value<Vec<_>> = state
+                        .0
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, word)| word.0.value().map(|v| *v))
+                        .collect();
+
+                    let state = r
+                        .map(|r| {
+                            let mut sum = r[0];
+                            sum = sum + r[1];
+                            sum = sum + r[2];
+
+                            vec![r[0] + sum, r[1] + sum, r[2] + sum]
+                        })
+                        .transpose_vec(WIDTH);
+
+                    Ok((0, state.try_into().unwrap()))
+                })?;
 
                 let state = (0..config.half_full_rounds)
                     .try_fold(state, |res, r| res.full_round(&mut region, config, r, r))?;
@@ -436,16 +452,18 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
                     .map(|v| *v + config.round_constants[round][idx])
             });
             let r: Value<Vec<F>> = q.map(|q| q.map(|q| q.pow(config.alpha))).collect();
-            let m = &config.m_reg;
-            let state = m.iter().map(|m_i| {
-                r.as_ref().map(|r| {
-                    r.iter()
-                        .enumerate()
-                        .fold(F::ZERO, |acc, (j, r_j)| acc + m_i[j] * r_j)
-                })
-            });
 
-            Ok((round + 1, state.collect::<Vec<_>>().try_into().unwrap()))
+            let state = r
+                .map(|r| {
+                    let mut sum = r[0];
+                    sum = sum + r[1];
+                    sum = sum + r[2];
+
+                    vec![r[0] + sum, r[1] + sum, r[2] + sum]
+                })
+                .transpose_vec(WIDTH);
+
+            Ok((round + 1, state.try_into().unwrap()))
         })
     }
 
@@ -457,15 +475,11 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         offset: usize,
     ) -> Result<Self, Error> {
         Self::round(region, config, round, offset, config.s_partial, |region| {
-            let m = &config.m_reg;
             let p: Value<Vec<_>> = self.0.iter().map(|word| word.0.value().cloned()).collect();
 
             let r: Value<Vec<_>> = p.map(|p| {
                 let r_0 = (p[0] + config.round_constants[round][0]).pow(config.alpha);
-                let r_i = p[1..]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p_i)| *p_i + config.round_constants[round][i + 1]);
+                let r_i = p[1..].iter().enumerate().map(|(i, p_i)| *p_i);
                 std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
             });
 
@@ -476,16 +490,13 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
                 || r.as_ref().map(|r| r[0]),
             )?;
 
-            let p_mid: Value<Vec<_>> = m
-                .iter()
-                .map(|m_i| {
-                    r.as_ref().map(|r| {
-                        m_i.iter()
-                            .zip(r.iter())
-                            .fold(F::ZERO, |acc, (m_ij, r_j)| acc + *m_ij * r_j)
-                    })
-                })
-                .collect();
+            let p_mid: Value<Vec<_>> = r.map(|r| {
+                let mut sum = r[0];
+                sum = sum + r[1];
+                sum = sum + r[2];
+
+                vec![r[0] + sum, r[1] + sum, r[2].double() + sum]
+            });
 
             // Load the second round constants.
             let mut load_round_constant = |i: usize| {
@@ -502,23 +513,19 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
 
             let r_mid: Value<Vec<_>> = p_mid.map(|p| {
                 let r_0 = (p[0] + config.round_constants[round + 1][0]).pow(config.alpha);
-                let r_i = p[1..]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p_i)| *p_i + config.round_constants[round + 1][i + 1]);
+                let r_i = p[1..].iter().enumerate().map(|(i, p_i)| *p_i);
                 std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
             });
 
-            let state: Vec<Value<_>> = m
-                .iter()
-                .map(|m_i| {
-                    r_mid.as_ref().map(|r| {
-                        m_i.iter()
-                            .zip(r.iter())
-                            .fold(F::ZERO, |acc, (m_ij, r_j)| acc + *m_ij * r_j)
-                    })
+            let state: Vec<Value<_>> = r_mid
+                .map(|r| {
+                    let mut sum = r[0];
+                    sum = sum + r[1];
+                    sum = sum + r[2];
+
+                    vec![r[0] + sum, r[1] + sum, r[2].double() + sum]
                 })
-                .collect();
+                .transpose_vec(WIDTH);
 
             Ok((round + 2, state.try_into().unwrap()))
         })
