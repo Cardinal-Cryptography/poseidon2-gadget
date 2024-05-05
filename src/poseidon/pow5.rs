@@ -1,3 +1,4 @@
+use core::panic;
 use std::convert::TryInto;
 use std::iter;
 
@@ -20,9 +21,8 @@ use crate::utilities::Var;
 #[derive(Clone, Debug)]
 pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
     pub(crate) state: [Column<Advice>; WIDTH],
-    partial_sbox: Column<Advice>,
     rc: [Column<Fixed>; WIDTH],
-    sum: Column<Advice>,
+    s_pre: Selector,
     s_full: Selector,
     s_partial: Selector,
     s_pad_and_add: Selector,
@@ -56,8 +56,6 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
     pub fn configure<S: Spec<F, WIDTH, RATE>>(
         meta: &mut ConstraintSystem<F>,
         state: [Column<Advice>; WIDTH],
-        sum: Column<Advice>,
-        partial_sbox: Column<Advice>,
         rc: [Column<Fixed>; WIDTH],
     ) -> Pow5Config<F, WIDTH, RATE> {
         assert_eq!(RATE, WIDTH - 1);
@@ -79,8 +77,10 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         for column in state {
             meta.enable_equality(column);
         }
-        meta.enable_equality(sum);
 
+        rc.iter().for_each(|column| meta.enable_constant(*column));
+
+        let s_pre = meta.selector();
         let s_full = meta.selector();
         let s_partial = meta.selector();
         let s_pad_and_add = meta.selector();
@@ -90,6 +90,24 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             let v2 = v.clone() * v.clone();
             v2.clone() * v2 * v
         };
+
+        meta.create_gate("pre round", |meta| {
+            let s_pre = meta.query_selector(s_pre);
+
+            Constraints::with_selector(
+                s_pre,
+                (0..WIDTH)
+                    .map(|idx| {
+                        let state_next = meta.query_advice(state[idx], Rotation::next());
+                        let state_cur = meta.query_advice(state[idx], Rotation::cur());
+                        let sum = (0..WIDTH)
+                            .map(|i| meta.query_advice(state[i], Rotation::cur()))
+                            .sum::<_>();
+                        state_cur + sum - state_next
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        });
 
         meta.create_gate("full round", |meta| {
             let s_full = meta.query_selector(s_full);
@@ -101,7 +119,9 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
                         let state_next = meta.query_advice(state[idx], Rotation::next());
                         let state_cur = meta.query_advice(state[idx], Rotation::cur());
                         let rc = meta.query_fixed(rc[idx], Rotation::cur());
-                        let sum = meta.query_advice(sum, Rotation::cur());
+                        let sum = (0..WIDTH)
+                            .map(|i| meta.query_advice(state[i], Rotation::cur()))
+                            .sum::<_>();
                         let expr = pow_5(state_cur + rc) + sum;
                         expr - state_next
                     })
@@ -115,12 +135,14 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             let state_next = meta.query_advice(state[0], Rotation::next());
             let state_cur = meta.query_advice(state[0], Rotation::cur());
             let rc = meta.query_fixed(rc[0], Rotation::cur());
-            let expr_sum = meta.query_advice(sum, Rotation::cur());
+            let expr_sum = (0..WIDTH)
+                .map(|i| meta.query_advice(state[i], Rotation::cur()))
+                .sum::<_>();
             let expr = pow_5(state_cur + rc) + expr_sum;
 
             std::iter::empty()
                 .chain(Constraints::with_selector(
-                    s_partial,
+                    s_partial.clone(),
                     vec![expr - state_next],
                 ))
                 .chain(Constraints::with_selector(
@@ -128,7 +150,9 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
                     (1..WIDTH).map(|idx| {
                         let state_next = meta.query_advice(state[idx], Rotation::next());
                         let state_cur = meta.query_advice(state[idx], Rotation::cur());
-                        let sum = meta.query_advice(sum, Rotation::cur());
+                        let sum = (0..WIDTH)
+                            .map(|i| meta.query_advice(state[i], Rotation::cur()))
+                            .sum::<_>();
                         let expr = state_cur * diag[idx] + sum;
                         expr - state_next
                     }),
@@ -164,9 +188,8 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
 
         Pow5Config {
             state,
-            partial_sbox,
             rc,
-            sum,
+            s_pre,
             s_full,
             s_partial,
             s_pad_and_add,
@@ -215,12 +238,11 @@ impl<F: Field, S: Spec<F, WIDTH, RATE>, const WIDTH: usize, const RATE: usize>
                 // Load the initial state into this region.
                 let state = Pow5State::load(&mut region, config, initial_state)?;
 
-                let state = Pow5State::round(&mut region, config, 0, 0, config.s_full, |_| {
+                let state = Pow5State::round(&mut region, config, 0, 0, config.s_pre, |_| {
                     let r: Value<Vec<_>> = state
                         .0
                         .iter()
-                        .enumerate()
-                        .map(|(idx, word)| word.0.value().map(|v| *v))
+                        .map(|word| word.0.value().map(|v| *v))
                         .collect();
 
                     let state = r
@@ -243,7 +265,7 @@ impl<F: Field, S: Spec<F, WIDTH, RATE>, const WIDTH: usize, const RATE: usize>
                     res.partial_round(
                         &mut region,
                         config,
-                        config.half_full_rounds + 2 * r,
+                        config.half_full_rounds + r,
                         config.half_full_rounds + r,
                     )
                 })?;
@@ -252,7 +274,7 @@ impl<F: Field, S: Spec<F, WIDTH, RATE>, const WIDTH: usize, const RATE: usize>
                     res.full_round(
                         &mut region,
                         config,
-                        config.half_full_rounds + 2 * config.half_partial_rounds + r,
+                        config.half_full_rounds + config.half_partial_rounds + r,
                         config.half_full_rounds + config.half_partial_rounds + r,
                     )
                 })?;
@@ -336,12 +358,16 @@ impl<
                 let load_input_word = |i: usize| {
                     let constraint_var = match input.0[i].clone() {
                         Some(PaddedWord::Message(word)) => word,
-                        Some(PaddedWord::Padding(padding_value)) => region.assign_fixed(
-                            || format!("load pad_{i}"),
-                            config.rc_b[i],
-                            1,
-                            || Value::known(padding_value),
-                        )?,
+                        Some(PaddedWord::Padding(padding_value)) => {
+                            panic!();
+                            #[allow(unreachable_code)]
+                            region.assign_fixed(
+                                || format!("load pad_{i}"),
+                                config.rc[i],
+                                1,
+                                || Value::known(padding_value),
+                            )?
+                        }
                         _ => panic!("Input is not padded"),
                     };
                     constraint_var
@@ -461,13 +487,6 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
                 let r_i = p[1..].iter().enumerate().map(|(i, p_i)| *p_i);
                 std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
             });
-
-            region.assign_advice(
-                || format!("round_{round} partial_sbox"),
-                config.partial_sbox,
-                offset,
-                || r.as_ref().map(|r| r[0]),
-            )?;
 
             let state = r
                 .map(|r| {
