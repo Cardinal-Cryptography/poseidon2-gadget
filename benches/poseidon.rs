@@ -1,16 +1,16 @@
-use ff::Field;
+use ff::{Field, PrimeField};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
+    dev::MockProver,
     plonk::{
         create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column,
         ConstraintSystem, Error, Instance,
     },
     poly::{
         commitment::ParamsProver,
-        ipa::{
-            commitment::{IPACommitmentScheme, ParamsIPA},
-            multiopen::ProverIPA,
-            strategy::SingleStrategy,
+        kzg::{
+            commitment::{KZGCommitmentScheme, ParamsKZG},
+            multiopen::{ProverSHPLONK, VerifierSHPLONK},
         },
         VerificationStrategy,
     },
@@ -23,7 +23,8 @@ use halo2_poseidon::poseidon::{
     primitives::{self as poseidon, generate_constants, ConstantLength, Mds, Spec},
     Hash, Pow5Chip, Pow5Config,
 };
-use halo2curves::bn256::{self, Bn256, Fr};
+use halo2_proofs::poly::kzg::strategy::SingleStrategy;
+use halo2curves::bn256::{Bn256, Fr};
 use std::convert::TryInto;
 use std::marker::PhantomData;
 
@@ -67,10 +68,9 @@ where
         let state = (0..WIDTH).map(|_| meta.advice_column()).collect::<Vec<_>>();
         let expected = meta.instance_column();
         meta.enable_equality(expected);
-        let sum = meta.advice_column();
-        let partial_sbox = meta.advice_column();
 
         let rc = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
+        let sum = meta.advice_column();
 
         Self::Config {
             input: state[..RATE].try_into().unwrap(),
@@ -79,6 +79,7 @@ where
                 meta,
                 state.try_into().unwrap(),
                 rc.try_into().unwrap(),
+                sum,
             ),
         }
     }
@@ -152,7 +153,7 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
     S: Spec<Fr, WIDTH, RATE> + Copy + Clone,
 {
     // Initialize the polynomial commitment parameters
-    let params: ParamsIPA<bn256::G1Affine> = ParamsIPA::new(K);
+    let params: ParamsKZG<Bn256> = ParamsKZG::new(K);
 
     let empty_circuit = HashCircuit::<S, WIDTH, RATE, L> {
         message: Value::unknown(),
@@ -168,7 +169,7 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
 
     let mut rng = OsRng;
     let message: [Fr; L] = (0..L)
-        .map(|_| Fr::random(rng))
+        .map(|i| Fr::from_u128(i as u128))
         .collect::<Vec<_>>()
         .try_into()
         .unwrap();
@@ -183,7 +184,7 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
         // Create a proof
         let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
         b.iter(|| {
-            create_proof::<IPACommitmentScheme<_>, ProverIPA<_>, _, _, _, _>(
+            create_proof::<KZGCommitmentScheme<_>, ProverSHPLONK<_>, _, _, _, _>(
                 &params,
                 &pk,
                 &[circuit],
@@ -195,9 +196,19 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
         })
     });
 
+    println!(
+        "Cost {:?}",
+        halo2_proofs::dev::cost_model::from_circuit_to_model_circuit::<_, _, 56, 56>(
+            7,
+            &circuit,
+            vec![vec![output]],
+            halo2_proofs::dev::cost_model::CommitmentScheme::KZGSHPLONK
+        )
+    );
+
     // Create a proof
     let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
-    create_proof::<IPACommitmentScheme<_>, ProverIPA<_>, _, _, _, _>(
+    create_proof::<KZGCommitmentScheme<_>, ProverSHPLONK<_>, _, _, _, _>(
         &params,
         &pk,
         &[circuit],
@@ -208,11 +219,24 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
     .expect("proof generation should not fail");
     let proof = transcript.finalize();
 
+    let strategy = SingleStrategy::new(&params);
+    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+    println!(
+        "Proof {:?}",
+        verify_proof::<_, VerifierSHPLONK<_>, _, _, _>(
+            &params,
+            pk.get_vk(),
+            strategy,
+            &[&[&[output]]],
+            &mut transcript
+        )
+    );
+
     c.bench_function(&verifier_name, |b| {
         b.iter(|| {
             let strategy = SingleStrategy::new(&params);
             let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
-            assert!(verify_proof(
+            assert!(verify_proof::<_, VerifierSHPLONK<_>, _, _, _>(
                 &params,
                 pk.get_vk(),
                 strategy,

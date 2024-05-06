@@ -1,0 +1,152 @@
+   Compiling halo2_poseidon v0.2.0 (/home/jedrzej/Desktop/aleph/poseidon-gadget)
+warning: unused import: `std::iter`
+ --> src/poseidon/pow5.rs:3:5
+  |
+3 | use std::iter;
+  |     ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Any`
+ --> src/poseidon/pow5.rs:9:17
+  |
+9 |         Advice, Any, Column, ConstraintSystem, Constraints, Error, Expression, Fixed, Selector,
+  |                 ^^^
+
+warning: unused import: `Mds`
+  --> src/poseidon/pow5.rs:15:37
+   |
+15 |     primitives::{Absorbing, Domain, Mds, Spec, Squeezing, State},
+   |                                     ^^^
+
+warning: unused import: `halo2curves::bn256::Fr`
+  --> src/poseidon/primitives.rs:21:5
+   |
+21 | use halo2curves::bn256::Fr;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `grain::SboxType`
+  --> src/poseidon/primitives.rs:24:5
+   |
+24 | use grain::SboxType;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused variable: `padding_value`
+   --> src/poseidon/pow5.rs:345:50
+    |
+345 |                         Some(PaddedWord::Padding(padding_value)) => {
+    |                                                  ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_padding_value`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `r_f`
+  --> src/poseidon/primitives.rs:66:9
+   |
+66 |     let r_f = S::full_rounds();
+   |         ^^^ help: if this is intentional, prefix it with an underscore: `_r_f`
+
+warning: unused variable: `r_p`
+  --> src/poseidon/primitives.rs:67:9
+   |
+67 |     let r_p = S::partial_rounds();
+   |         ^^^ help: if this is intentional, prefix it with an underscore: `_r_p`
+
+warning: variant `PrimeOrder` is never constructed
+  --> src/poseidon/primitives/grain.rs:17:5
+   |
+12 | pub(super) enum FieldType {
+   |                 --------- variant in this enum
+...
+17 |     PrimeOrder,
+   |     ^^^^^^^^^^
+   |
+   = note: `FieldType` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: method `tag` is never used
+  --> src/poseidon/primitives/grain.rs:21:8
+   |
+20 | impl FieldType {
+   | -------------- method in this implementation
+21 |     fn tag(&self) -> u8 {
+   |        ^^^
+
+warning: variant `Pow` is never constructed
+  --> src/poseidon/primitives/grain.rs:32:5
+   |
+30 | pub(super) enum SboxType {
+   |                 -------- variant in this enum
+31 |     /// x^alpha
+32 |     Pow,
+   |     ^^^
+   |
+   = note: `SboxType` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `tag` is never used
+  --> src/poseidon/primitives/grain.rs:39:8
+   |
+38 | impl SboxType {
+   | ------------- method in this implementation
+39 |     fn tag(&self) -> u8 {
+   |        ^^^
+
+warning: associated items `new` and `next_field_element` are never used
+   --> src/poseidon/primitives/grain.rs:54:19
+    |
+53  | impl<F: PrimeField> Grain<F> {
+    | ---------------------------- associated items in this implementation
+54  |     pub(super) fn new(sbox: SboxType, t: u16, r_f: u16, r_p: u16) -> Self {
+    |                   ^^^
+...
+113 |     pub(super) fn next_field_element(&mut self) -> F {
+    |                   ^^^^^^^^^^^^^^^^^^
+
+warning: method `next_field_element_without_rejection` is never used
+   --> src/poseidon/primitives/grain.rs:144:19
+    |
+141 | impl<F: FromUniformBytes<64>> Grain<F> {
+    | -------------------------------------- method in this implementation
+...
+144 |     pub(super) fn next_field_element_without_rejection(&mut self) -> F {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `generate_mds` is never used
+ --> src/poseidon/primitives/mds.rs:5:15
+  |
+5 | pub(super) fn generate_mds<F: FromUniformBytes<64> + Ord, const T: usize>(
+  |               ^^^^^^^^^^^^
+
+warning: `halo2_poseidon` (lib) generated 15 warnings (run `cargo fix --lib -p halo2_poseidon` to apply 8 suggestions)
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+  --> benches/poseidon.rs:77:30
+   |
+77 |               poseidon_config: Pow5Chip::configure::<S>(
+   |  ______________________________^^^^^^^^^^^^^^^^^^^^^^^^-
+78 | |                 meta,
+79 | |                 state.try_into().unwrap(),
+80 | |                 rc.try_into().unwrap(),
+81 | |             ),
+   | |_____________- an argument of type `halo2_proofs::plonk::Column<halo2_proofs::plonk::Advice>` is missing
+   |
+note: associated function defined here
+  --> /home/jedrzej/Desktop/aleph/poseidon-gadget/src/poseidon/pow5.rs:59:12
+   |
+59 |     pub fn configure<S: Spec<F, WIDTH, RATE>>(
+   |            ^^^^^^^^^
+help: provide the argument
+   |
+77 |             poseidon_config: Pow5Chip::configure::<S>(meta, state.try_into().unwrap(), rc.try_into().unwrap(), /* halo2_proofs::plonk::Column<halo2_proofs::plonk::Advice> */),
+   |                                                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+warning: unused import: `VerificationStrategy`
+  --> benches/poseidon.rs:15:9
+   |
+15 |         VerificationStrategy,
+   |         ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+For more information about this error, try `rustc --explain E0061`.
+warning: `halo2_poseidon` (bench "poseidon") generated 1 warning
+error: could not compile `halo2_poseidon` (bench "poseidon") due to previous error; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
