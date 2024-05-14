@@ -12,13 +12,15 @@ use halo2_proofs::arithmetic::Field;
 pub(crate) mod fp;
 pub(crate) mod fq;
 pub(crate) mod grain;
+pub(crate) mod matrix_full;
+pub(crate) mod matrix_partial;
 pub(crate) mod mds;
 
 #[cfg(test)]
 pub(crate) mod test_vectors;
 
 mod p128pow5t3;
-use halo2curves::bn256::Fr;
+
 pub use p128pow5t3::P128Pow5T3;
 
 use grain::SboxType;
@@ -56,7 +58,7 @@ pub trait Spec<F: Field, const T: usize, const RATE: usize>: fmt::Debug {
     fn constants() -> (Vec<[F; T]>, Mds<F, T>, Mds<F, T>);
 }
 
-/// Generates `(round_constants, mds, mds^-1)` corresponding to this specification.
+/// Generates `(round_constants, matrix_full, matrix_partial_m_1)` corresponding to this specification.
 pub fn generate_constants<
     F: FromUniformBytes<64> + Ord,
     S: Spec<F, T, RATE>,
@@ -81,30 +83,10 @@ pub fn generate_constants<
     round_constants
         .extend((0..r_f / 2).map(|_| std::array::from_fn(|_| grain.next_field_element())));
 
-    let mut mds_full = [[F::ONE; T]; T];
-    let mut mds_partial = [[F::ONE; T]; T];
+    let matrix_full = matrix_full::generate();
+    let matrix_partial_m_1 = matrix_partial::generate_matrix_m_1();
 
-    for i in 0..T {
-        for j in 0..T {
-            match (i, j) {
-                (0, 0) => {
-                    mds_full[i][j] = F::from_u128(1);
-                    mds_partial[i][j] = F::from_u128(1);
-                }
-                (1, 1) => {
-                    mds_full[i][j] = F::from_u128(1);
-                    mds_partial[i][j] = F::from_u128(1);
-                }
-                (2, 2) => {
-                    mds_full[i][j] = F::from_u128(1);
-                    mds_partial[i][j] = F::from_u128(2);
-                }
-                (_, _) => {}
-            };
-        }
-    }
-
-    (round_constants, mds_full, mds_partial)
+    (round_constants, matrix_full, matrix_partial_m_1)
 }
 
 /// Runs the Poseidon permutation on the given state.
