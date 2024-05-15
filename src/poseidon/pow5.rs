@@ -109,7 +109,6 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
                         let expr = (0..WIDTH)
                             .map(|idx| {
                                 let state_cur = meta.query_advice(state[idx], Rotation::cur());
-                                let rc = meta.query_fixed(rc[idx], Rotation::cur());
                                 state_cur * m_full[next_idx][idx]
                             })
                             .reduce(|acc, term| acc + term)

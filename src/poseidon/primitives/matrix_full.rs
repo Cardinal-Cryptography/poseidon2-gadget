@@ -32,10 +32,19 @@ fn generate_matrix_width_4k<F: FromUniformBytes<64> + Ord, const T: usize>() -> 
 
     let mut matrix_full = [[F::ONE; T]; T];
 
-    for i in 0..T {
-        for j in 0..T {
-            let multiplier = if i / 4 == j / 4 { f(2) } else { f(1) };
-            matrix_full[i][j] = matrix_4_4[i % 4][j % 4] * multiplier;
+    if T == 4 {
+        for i in 0..T {
+            for j in 0..T {
+                matrix_full[i][j] = matrix_4_4[i][j];
+            }
+        }
+    }
+    if T > 4 {
+        for i in 0..T {
+            for j in 0..T {
+                let multiplier = if i / 4 == j / 4 { f(2) } else { f(1) };
+                matrix_full[i][j] = matrix_4_4[i % 4][j % 4] * multiplier;
+            }
         }
     }
 

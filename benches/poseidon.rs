@@ -258,7 +258,9 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
 fn criterion_benchmark(c: &mut Criterion) {
     bench_poseidon::<MySpec<3, 2>, 3, 2, 2>("WIDTH = 3, RATE = 2", c);
     bench_poseidon::<MySpec<4, 3>, 4, 3, 3>("WIDTH = 4, RATE = 3", c);
-    //bench_poseidon::<MySpec<12, 11>, 12, 11, 11>("WIDTH = 12, RATE = 11", c);
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 7>("WIDTH = 8, RATE = 7", c);
+    bench_poseidon::<MySpec<12, 11>, 12, 11, 11>("WIDTH = 12, RATE = 11", c);
+    bench_poseidon::<MySpec<16, 15>, 16, 15, 15>("WIDTH = 16, RATE = 15", c);
 }
 
 criterion_group!(benches, criterion_benchmark);
