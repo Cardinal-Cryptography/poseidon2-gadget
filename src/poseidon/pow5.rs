@@ -6,7 +6,8 @@ use halo2_proofs::{
     arithmetic::Field,
     circuit::{AssignedCell, Cell, Chip, Layouter, Region, Value},
     plonk::{
-        Advice, Any, Column, ConstraintSystem, Constraints, Error, Expression, Fixed, Selector,
+        Advice, Any, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Fixed,
+        Selector,
     },
     poly::Rotation,
 };
@@ -434,6 +435,71 @@ impl<F: Field> Var<F> for StateWord<F> {
     }
 }
 
+impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
+    fn matmul_4(&self, mut input: Vec<Value<F>>) -> Vec<Value<F>> {
+        for i in (0..WIDTH).step_by(4) {
+            let t_0 = input[i] + input[i + 1];
+
+            let t_1 = input[i + 2] + input[i + 3];
+
+            let mut t_2: Value<Assigned<_>> = input[i + 1].into();
+            t_2 = t_2.double() + t_1;
+
+            let mut t_3: Value<Assigned<_>> = input[i + 3].into();
+            t_3 = t_3.double() + t_0;
+
+            let mut t_4: Value<Assigned<_>> = t_1.into();
+            t_4 = t_4.double().double() + t_3;
+
+            let mut t_5: Value<Assigned<_>> = t_0.into();
+            t_5 = t_5.double().double() + t_2;
+
+            input[i] = (t_3 + t_5).evaluate();
+            input[i + 1] = t_5.evaluate();
+            input[i + 2] = (t_2 + t_4).evaluate();
+            input[i + 3] = t_4.evaluate();
+        }
+        input
+    }
+
+    fn matmul_full(&self, input: Vec<Value<F>>) -> [Value<F>; WIDTH] {
+        match WIDTH {
+            3 => {
+                let mut sum = Value::known(F::ZERO);
+                sum = sum + input[0];
+                sum = sum + input[1];
+                sum = sum + input[2];
+
+                input
+                    .into_iter()
+                    .map(|r| r + sum)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
+            }
+            4 => self.matmul_4(input).try_into().unwrap(),
+            8 | 12 | 16 | 20 => {
+                let input = self.matmul_4(input);
+                let mut sum = [Value::known(F::ZERO); 4];
+                for i in 0..4 {
+                    sum[i] = input[i];
+                    for j in (4..WIDTH).step_by(4) {
+                        sum[i] = sum[i] + input[j + i];
+                    }
+                }
+                input
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, r)| r + sum[i % 4])
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Pow5State<F: Field, const WIDTH: usize>([StateWord<F>; WIDTH]);
 
@@ -446,15 +512,20 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         offset: usize,
     ) -> Result<Self, Error> {
         Self::round(region, config, round, offset, config.s_pre, |region| {
-            let r = self.0.iter().map(|word| word.0.value().map(|v| *v));
+            let r: Vec<Value<F>> = self
+                .0
+                .iter()
+                .map(|word| word.0.value().map(|v| *v))
+                .collect();
 
-            let sum = r.clone().fold(Value::known(F::ZERO), |acc, v| acc + v);
+            let sum = r
+                .clone()
+                .into_iter()
+                .fold(Value::known(F::ZERO), |acc, v| acc + v);
 
             region.assign_advice(|| format!("round_{round} sum"), config.sum, offset, || sum)?;
 
-            let state = r.map(|r| r + sum);
-
-            Ok((round + 1, state.collect::<Vec<_>>().try_into().unwrap()))
+            Ok((round + 1, self.matmul_full(r)))
         })
     }
 
@@ -472,15 +543,16 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
                     .value()
                     .map(|v| *v + config.round_constants[round - 1][idx])
             });
-            let r = q.map(|q| q.map(|q| q.pow(config.alpha)));
+            let r: Vec<_> = q.map(|q| q.map(|q| q.pow(config.alpha))).collect();
 
-            let sum = r.clone().fold(Value::known(F::ZERO), |acc, v| acc + v);
+            let sum = r
+                .clone()
+                .into_iter()
+                .fold(Value::known(F::ZERO), |acc, v| acc + v);
 
             region.assign_advice(|| format!("round_{round} sum"), config.sum, offset, || sum)?;
 
-            let state = r.map(|r| r + sum);
-
-            Ok((round + 1, state.collect::<Vec<_>>().try_into().unwrap()))
+            Ok((round + 1, self.matmul_full(r)))
         })
     }
 
@@ -504,11 +576,12 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
 
             region.assign_advice(|| format!("round_{round} sum"), config.sum, offset, || sum)?;
 
-            let mut state = r.transpose_vec(WIDTH);
-
-            state[0] = state[0] + sum;
-            state[1] = state[1] + sum;
-            state[2] = state[2] * Value::known(F::ONE + F::ONE) + sum;
+            let state: Vec<Value<F>> = r
+                .transpose_vec(WIDTH)
+                .into_iter()
+                .enumerate()
+                .map(|(i, r)| r * Value::known(config.diag[i]) + sum)
+                .collect();
 
             Ok((round + 1, state.try_into().unwrap()))
         })
