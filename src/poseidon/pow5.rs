@@ -155,7 +155,7 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
 
                         if idx == 0 {
                             let rc = meta.query_fixed(rc[idx], Rotation::cur());
-                            pow_5(state_cur + rc) + sum - state_next
+                            pow_5(state_cur + rc) * diag[idx] + sum - state_next
                         } else {
                             state_cur * diag[idx] + sum - state_next
                         }
@@ -438,26 +438,26 @@ impl<F: Field> Var<F> for StateWord<F> {
 impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
     fn matmul_4(&self, mut input: Vec<Value<F>>) -> Vec<Value<F>> {
         for i in (0..WIDTH).step_by(4) {
-            let t_0 = input[i] + input[i + 1];
+            let t_0 = input[i] + input[i + 1]; // a + b
 
-            let t_1 = input[i + 2] + input[i + 3];
+            let t_1 = input[i + 2] + input[i + 3]; // c + d
 
-            let mut t_2: Value<Assigned<_>> = input[i + 1].into();
-            t_2 = t_2.double() + t_1;
+            let mut t_2: Value<_> = input[i + 1]; // b
+            t_2 = t_2 * Value::known(F::ONE + F::ONE) + t_1; // 2b + c + d
 
-            let mut t_3: Value<Assigned<_>> = input[i + 3].into();
-            t_3 = t_3.double() + t_0;
+            let mut t_3: Value<_> = input[i + 3]; // d
+            t_3 = t_3 * Value::known(F::ONE + F::ONE) + t_0; // 2d + a + b
 
-            let mut t_4: Value<Assigned<_>> = t_1.into();
-            t_4 = t_4.double().double() + t_3;
+            let mut t_4: Value<_> = t_1.into(); // c + d
+            t_4 = t_4 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_3; // a + b + 4c + 6d
 
-            let mut t_5: Value<Assigned<_>> = t_0.into();
-            t_5 = t_5.double().double() + t_2;
+            let mut t_5: Value<_> = t_0.into(); // a + b
+            t_5 = t_5 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_2; // 4a + 6b + c + d
 
-            input[i] = (t_3 + t_5).evaluate();
-            input[i + 1] = t_5.evaluate();
-            input[i + 2] = (t_2 + t_4).evaluate();
-            input[i + 3] = t_4.evaluate();
+            input[i] = t_3 + t_5; // 5a + 7b + c + 3d
+            input[i + 1] = t_5; // 4a + 6b + c + d
+            input[i + 2] = t_2 + t_4; // a + 3b + 5c + 7d
+            input[i + 3] = t_4; // a + b + 4c + 6d
         }
         input
     }

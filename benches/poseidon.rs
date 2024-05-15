@@ -180,6 +180,13 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
         _spec: PhantomData,
     };
 
+    println!(
+        "Proof {:?}",
+        MockProver::run(K, &circuit, vec![vec![output]])
+            .unwrap()
+            .verify()
+    );
+
     c.bench_function(&prover_name, |b| {
         // Create a proof
         let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
@@ -250,7 +257,7 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
 
 fn criterion_benchmark(c: &mut Criterion) {
     bench_poseidon::<MySpec<3, 2>, 3, 2, 2>("WIDTH = 3, RATE = 2", c);
-    //bench_poseidon::<MySpec<9, 8>, 9, 8, 8>("WIDTH = 9, RATE = 8", c);
+    bench_poseidon::<MySpec<4, 3>, 4, 3, 3>("WIDTH = 4, RATE = 3", c);
     //bench_poseidon::<MySpec<12, 11>, 12, 11, 11>("WIDTH = 12, RATE = 11", c);
 }
 

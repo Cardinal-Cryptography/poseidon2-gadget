@@ -105,11 +105,7 @@ pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE:
         #[allow(clippy::needless_range_loop)]
         for i in 0..T {
             for j in 0..T {
-                if i == j {
-                    new_state[i] += (mds_full[i][j] + F::ONE) * state[j];
-                } else {
-                    new_state[i] += mds_full[i][j] * state[j];
-                }
+                new_state[i] += mds_full[i][j] * state[j];
             }
         }
         *state = new_state;
