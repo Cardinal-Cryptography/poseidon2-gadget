@@ -144,21 +144,30 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         meta.create_gate("partial rounds", |meta| {
             let s_partial = meta.query_selector(s_partial);
 
+            let rc_0 = meta.query_fixed(rc[0], Rotation::cur());
+            let state_cur_0 = meta.query_advice(state[0], Rotation::cur());
+            let state_next_0 = meta.query_advice(state[0], Rotation::next());
+            let pow5_0 = pow_5(state_cur_0 + rc_0);
+
+            let sum_expr = pow5_0.clone()
+                + (1..WIDTH)
+                    .map(|idx| meta.query_advice(state[idx], Rotation::cur()))
+                    .reduce(|acc, term| acc + term)
+                    .expect("WIDTH > 1");
+
+            let sum_cell = meta.query_advice(sum, Rotation::cur());
+
             Constraints::with_selector(
                 s_partial,
-                (0..WIDTH)
+                (1..WIDTH)
                     .map(|idx| {
                         let state_next = meta.query_advice(state[idx], Rotation::next());
                         let state_cur = meta.query_advice(state[idx], Rotation::cur());
-                        let sum = meta.query_advice(sum, Rotation::cur());
 
-                        if idx == 0 {
-                            let rc = meta.query_fixed(rc[idx], Rotation::cur());
-                            pow_5(state_cur + rc) * diag[idx] + sum - state_next
-                        } else {
-                            state_cur * diag[idx] + sum - state_next
-                        }
+                        state_cur * diag[idx] + sum_cell.clone() - state_next
                     })
+                    .chain(Some(pow5_0 * diag[0] + sum_cell.clone() - state_next_0))
+                    .chain(Some(sum_expr - sum_cell.clone()))
                     .collect::<Vec<_>>(),
             )
         });
