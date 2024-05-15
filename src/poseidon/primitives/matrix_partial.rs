@@ -16,6 +16,9 @@ fn generate_matrix_m_1_width_3<F: FromUniformBytes<64> + Ord, const T: usize>() 
 }
 
 /// Generate the matrix for the case T=4k, with `1` subtracted from the diagonal.
+/// Constants generated using
+/// https://github.com/HorizenLabs/poseidon2/blob/main/poseidon2_rust_params.sage
+/// with `p` switched to BN254/BN256 and `t` set to an appropriate value.
 fn generate_matrix_m_1_width_4k<F: FromUniformBytes<64> + Ord, const T: usize>() -> Mds<F, T> {
     assert!(T >= 4 && T % 4 == 0);
 
