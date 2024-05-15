@@ -33,6 +33,7 @@ pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
     partial_rounds: usize,
     alpha: [u64; 4],
     round_constants: Vec<[F; WIDTH]>,
+    m_full: Mds<F, WIDTH>,
     #[allow(dead_code)]
     diag: Vec<F>,
 }
@@ -70,7 +71,7 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         let pre_rounds = 1;
         let half_full_rounds = S::full_rounds() / 2;
         let partial_rounds = S::partial_rounds();
-        let (round_constants, _, mds_partial) = S::constants();
+        let (round_constants, m_full, mds_partial) = S::constants();
 
         let diag: Vec<F> = (0..WIDTH).map(|i| mds_partial[i][i]).collect();
 
@@ -102,12 +103,17 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             Constraints::with_selector(
                 s_pre,
                 (0..WIDTH)
-                    .map(|idx| {
-                        let state_next = meta.query_advice(state[idx], Rotation::next());
-                        let state_cur = meta.query_advice(state[idx], Rotation::cur());
-                        let sum = meta.query_advice(sum, Rotation::cur());
-
-                        state_cur + sum - state_next
+                    .map(|next_idx| {
+                        let state_next = meta.query_advice(state[next_idx], Rotation::next());
+                        let expr = (0..WIDTH)
+                            .map(|idx| {
+                                let state_cur = meta.query_advice(state[idx], Rotation::cur());
+                                let rc = meta.query_fixed(rc[idx], Rotation::cur());
+                                state_cur * m_full[next_idx][idx]
+                            })
+                            .reduce(|acc, term| acc + term)
+                            .expect("WIDTH > 0");
+                        expr - state_next
                     })
                     .collect::<Vec<_>>(),
             )
@@ -119,13 +125,17 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             Constraints::with_selector(
                 s_full,
                 (0..WIDTH)
-                    .map(|idx| {
-                        let state_next = meta.query_advice(state[idx], Rotation::next());
-                        let state_cur = meta.query_advice(state[idx], Rotation::cur());
-                        let rc = meta.query_fixed(rc[idx], Rotation::cur());
-                        let sum = meta.query_advice(sum, Rotation::cur());
-
-                        pow_5(state_cur + rc) + sum - state_next
+                    .map(|next_idx| {
+                        let state_next = meta.query_advice(state[next_idx], Rotation::next());
+                        let expr = (0..WIDTH)
+                            .map(|idx| {
+                                let state_cur = meta.query_advice(state[idx], Rotation::cur());
+                                let rc = meta.query_fixed(rc[idx], Rotation::cur());
+                                pow_5(state_cur + rc) * m_full[next_idx][idx]
+                            })
+                            .reduce(|acc, term| acc + term)
+                            .expect("WIDTH > 0");
+                        expr - state_next
                     })
                     .collect::<Vec<_>>(),
             )
@@ -192,6 +202,7 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             partial_rounds,
             alpha,
             round_constants,
+            m_full,
             diag,
         }
     }
@@ -455,6 +466,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         offset: usize,
     ) -> Result<Self, Error> {
         Self::round(region, config, round, offset, config.s_full, |region| {
+            // TODO: make it work for T >= 4
             let q = self.0.iter().enumerate().map(|(idx, word)| {
                 word.0
                     .value()
