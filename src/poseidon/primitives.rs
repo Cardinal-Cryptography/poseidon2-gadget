@@ -425,7 +425,7 @@ mod tests {
     fn orchard_spec_equivalence() {
         let message = [pallas::Base::from(6), pallas::Base::from(42)];
 
-        let (round_constants, mds, _) = OrchardNullifier::constants();
+        let (round_constants, mds_full, mds_partial) = OrchardNullifier::constants();
 
         let hasher = Hash::<_, OrchardNullifier, ConstantLength<2>, 3, 2>::init();
         let result = hasher.hash(message);
@@ -433,7 +433,7 @@ mod tests {
         // The result should be equivalent to just directly applying the permutation and
         // taking the first state element as the output.
         let mut state = [message[0], message[1], pallas::Base::from_u128(2 << 64)];
-        permute::<_, OrchardNullifier, 3, 2>(&mut state, &mds, &round_constants);
+        permute::<_, OrchardNullifier, 3, 2>(&mut state, &mds_full, &mds_partial, &round_constants);
         assert_eq!(state[0], result);
     }
 }
