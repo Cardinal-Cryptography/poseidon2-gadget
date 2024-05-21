@@ -541,7 +541,6 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         offset: usize,
     ) -> Result<Self, Error> {
         Self::round(region, config, round, offset, config.s_full, |region| {
-            // TODO: make it work for T >= 4
             let q = self.0.iter().enumerate().map(|(idx, word)| {
                 word.0
                     .value()
@@ -628,10 +627,15 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
             )
         };
 
-        if round == 0 {
-        } else if round > 5 && round < 61 {
+        let partial_rounds_begin = config.pre_rounds + config.half_full_rounds;
+        let partial_rounds_end = partial_rounds_begin + config.partial_rounds;
+
+        if round < config.pre_rounds {
+            // No constants are used in the preliminary round.
+        } else if (partial_rounds_begin..partial_rounds_end).contains(&round) {
             load_round_constant(0)?;
         } else {
+            // Full round.
             for i in 0..WIDTH {
                 load_round_constant(i)?;
             }

@@ -12,7 +12,6 @@ use halo2_proofs::{
             commitment::{KZGCommitmentScheme, ParamsKZG},
             multiopen::{ProverSHPLONK, VerifierSHPLONK},
         },
-        VerificationStrategy,
     },
     transcript::{
         Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer, TranscriptWriterBuffer,
