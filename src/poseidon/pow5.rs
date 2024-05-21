@@ -452,10 +452,10 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
             let mut t_3: Value<_> = input[i + 3]; // d
             t_3 = t_3 * Value::known(F::ONE + F::ONE) + t_0; // 2d + a + b
 
-            let mut t_4: Value<_> = t_1.into(); // c + d
+            let mut t_4: Value<_> = t_1; // c + d
             t_4 = t_4 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_3; // a + b + 4c + 6d
 
-            let mut t_5: Value<_> = t_0.into(); // a + b
+            let mut t_5: Value<_> = t_0; // a + b
             t_5 = t_5 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_2; // 4a + 6b + c + d
 
             input[i] = t_3 + t_5; // 5a + 7b + c + 3d
@@ -572,7 +572,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
 
             let r: Value<Vec<_>> = q.map(|q| {
                 let r_0 = (q[0] + config.round_constants[round - 1][0]).pow(config.alpha);
-                let r_i = q[1..].into_iter().map(|q_i| *q_i);
+                let r_i = q[1..].iter().copied();
                 std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
             });
 
