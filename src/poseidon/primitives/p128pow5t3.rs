@@ -199,7 +199,7 @@ mod tests {
             permute::<Fp, P128Pow5T3Gen<Fp, 0>, 3, 2>(
                 &mut input,
                 &fp::MDS,
-                &fp::MDS_INV, // TODO: mds_partial is needed here, not inv.
+                &fp::MDS_INV, // TODO: m_partial is needed here, not inv.
                 &fp::ROUND_CONSTANTS,
             );
             assert_eq!(input, expected_output);
@@ -255,7 +255,7 @@ mod tests {
             permute::<Fq, P128Pow5T3Gen<Fq, 0>, 3, 2>(
                 &mut input,
                 &fq::MDS,
-                &fq::MDS_INV, // TODO: mds_partial is needed here, not inv.
+                &fq::MDS_INV, // TODO: m_partial is needed here, not inv.
                 &fq::ROUND_CONSTANTS,
             );
             assert_eq!(input, expected_output);
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn permute_test_vectors() {
         {
-            let (round_constants, mds_full, mds_partial) = super::P128Pow5T3::constants();
+            let (round_constants, m_full, m_partial) = super::P128Pow5T3::constants();
 
             for tv in crate::poseidon::primitives::test_vectors::fp::permute() {
                 let mut state = [
@@ -276,8 +276,8 @@ mod tests {
 
                 permute::<Fp, super::P128Pow5T3, 3, 2>(
                     &mut state,
-                    &mds_full,
-                    &mds_partial,
+                    &m_full,
+                    &m_partial,
                     &round_constants,
                 );
 
@@ -288,7 +288,7 @@ mod tests {
         }
 
         {
-            let (round_constants, mds_full, mds_partial) = super::P128Pow5T3::constants();
+            let (round_constants, m_full, m_partial) = super::P128Pow5T3::constants();
 
             for tv in crate::poseidon::primitives::test_vectors::fq::permute() {
                 let mut state = [
@@ -299,8 +299,8 @@ mod tests {
 
                 permute::<Fq, super::P128Pow5T3, 3, 2>(
                     &mut state,
-                    &mds_full,
-                    &mds_partial,
+                    &m_full,
+                    &m_partial,
                     &round_constants,
                 );
 

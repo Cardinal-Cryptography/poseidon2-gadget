@@ -68,9 +68,9 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         let pre_rounds = 1;
         let half_full_rounds = S::full_rounds() / 2;
         let partial_rounds = S::partial_rounds();
-        let (round_constants, m_full, mds_partial) = S::constants();
+        let (round_constants, m_full, m_partial) = S::constants();
 
-        let diag: Vec<F> = (0..WIDTH).map(|i| mds_partial[i][i]).collect();
+        let diag: Vec<F> = (0..WIDTH).map(|i| m_partial[i][i]).collect();
 
         // This allows state words to be initialized (by constraining them equal to fixed
         // values), and used in a permutation from an arbitrary region. rc_a is used in
@@ -742,11 +742,11 @@ mod tests {
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap();
-            let (round_constants, mds_full, mds_partial) = S::constants();
+            let (round_constants, m_full, m_partial) = S::constants();
             poseidon::permute::<_, S, WIDTH, RATE>(
                 &mut expected_final_state,
-                &mds_full,
-                &mds_partial,
+                &m_full,
+                &m_partial,
                 &round_constants,
             );
 
