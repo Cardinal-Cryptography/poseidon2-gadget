@@ -13,6 +13,10 @@ use super::{Mds, Spec};
 pub struct P128Pow5T3;
 
 impl Spec<Fp, 3, 2> for P128Pow5T3 {
+    fn pre_rounds() -> usize {
+        unimplemented!()
+    }
+
     fn full_rounds() -> usize {
         8
     }
@@ -39,6 +43,10 @@ impl Spec<Fp, 3, 2> for P128Pow5T3 {
 }
 
 impl Spec<Fq, 3, 2> for P128Pow5T3 {
+    fn pre_rounds() -> usize {
+        unimplemented!()
+    }
+
     fn full_rounds() -> usize {
         8
     }
@@ -92,6 +100,10 @@ mod tests {
     impl<F: FromUniformBytes<64> + Ord, const SECURE_MDS: usize> Spec<F, 3, 2>
         for P128Pow5T3Gen<F, SECURE_MDS>
     {
+        fn pre_rounds() -> usize {
+            unimplemented!()
+        }
+
         fn full_rounds() -> usize {
             8
         }

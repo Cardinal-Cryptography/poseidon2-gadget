@@ -122,6 +122,10 @@ where
 struct MySpec<const WIDTH: usize, const RATE: usize>;
 
 impl<const WIDTH: usize, const RATE: usize> Spec<Fr, WIDTH, RATE> for MySpec<WIDTH, RATE> {
+    fn pre_rounds() -> usize {
+        1
+    }
+
     fn full_rounds() -> usize {
         8
     }

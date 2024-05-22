@@ -65,7 +65,7 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         // This gadget requires R_F and R_P to be even.
         assert!(S::full_rounds() & 1 == 0);
         assert!(S::partial_rounds() & 1 == 0);
-        let pre_rounds = 1;
+        let pre_rounds = S::pre_rounds();
         let half_full_rounds = S::full_rounds() / 2;
         let partial_rounds = S::partial_rounds();
         let (round_constants, m_full, m_partial) = S::constants();
@@ -544,7 +544,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
             let q = self.0.iter().enumerate().map(|(idx, word)| {
                 word.0
                     .value()
-                    .map(|v| *v + config.round_constants[round - 1][idx])
+                    .map(|v| *v + config.round_constants[round][idx])
             });
             let r: Vec<_> = q.map(|q| q.map(|q| q.pow(config.alpha))).collect();
 
@@ -570,7 +570,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
             let q: Value<Vec<_>> = self.0.iter().map(|word| word.0.value().cloned()).collect();
 
             let r: Value<Vec<_>> = q.map(|q| {
-                let r_0 = (q[0] + config.round_constants[round - 1][0]).pow(config.alpha);
+                let r_0 = (q[0] + config.round_constants[round][0]).pow(config.alpha);
                 let r_i = q[1..].iter().copied();
                 std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
             });
@@ -623,7 +623,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
                 || format!("round_{round} rc_{i}"),
                 config.rc[i],
                 offset,
-                || Value::known(config.round_constants[round - 1][i]),
+                || Value::known(config.round_constants[round][i]),
             )
         };
 

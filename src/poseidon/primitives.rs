@@ -36,6 +36,9 @@ pub type Mds<F, const T: usize> = [[F; T]; T];
 
 /// A specification for a Poseidon permutation.
 pub trait Spec<F: Field, const T: usize, const RATE: usize>: fmt::Debug {
+    /// The number of preliminary rounds, which were introduced in Poseidon 2.
+    fn pre_rounds() -> usize;
+
     /// The number of full rounds for this specification.
     ///
     /// This must be an even number.
@@ -70,9 +73,11 @@ pub fn generate_constants<
 
     let mut grain = grain::Grain::new(SboxType::Pow, T as u16, r_f as u16, r_p as u16);
 
-    let mut round_constants: Vec<_> = (0..r_f / 2)
-        .map(|_| std::array::from_fn(|_| grain.next_field_element()))
-        .collect();
+    // No round constants in
+    let mut round_constants: Vec<_> = vec![[F::ZERO; T]; 1];
+
+    round_constants
+        .extend((0..r_f / 2).map(|_| std::array::from_fn(|_| grain.next_field_element())));
 
     round_constants.extend((0..r_p).map(|_| {
         let mut rc_row = [F::ZERO; T];
@@ -96,6 +101,7 @@ pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE:
     matrix_part: &Mds<F, T>,
     round_constants: &[[F; T]],
 ) {
+    let r_pre = S::pre_rounds();
     let r_f = S::full_rounds() / 2;
     let r_p = S::partial_rounds();
 
@@ -127,7 +133,9 @@ pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE:
         *state = new_state;
     };
 
-    apply_matrix_full(state);
+    let pre_round = |state: &mut State<F, T>, _: &[F; T]| {
+        apply_matrix_full(state);
+    };
 
     let full_round = |state: &mut State<F, T>, rcs: &[F; T]| {
         for (word, rc) in state.iter_mut().zip(rcs.iter()) {
@@ -146,6 +154,7 @@ pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE:
     };
 
     iter::empty()
+        .chain(iter::repeat(&pre_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_pre))
         .chain(iter::repeat(&full_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_f))
         .chain(iter::repeat(&part_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_p))
         .chain(iter::repeat(&full_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_f))
