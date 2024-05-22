@@ -1,7 +1,7 @@
 use ff::{Field, PrimeField};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
-    dev::MockProver,
+    dev::{CircuitCost, MockProver},
     plonk::{
         create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column,
         ConstraintSystem, Error, Instance,
@@ -23,14 +23,14 @@ use halo2_poseidon::poseidon::{
     Hash, Pow5Chip, Pow5Config,
 };
 use halo2_proofs::poly::kzg::strategy::SingleStrategy;
-use halo2curves::bn256::{Bn256, Fr};
+use halo2curves::bn256::{Bn256, Fr, G1};
 use std::convert::TryInto;
 use std::marker::PhantomData;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use rand::rngs::OsRng;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct HashCircuit<S, const WIDTH: usize, const RATE: usize, const L: usize>
 where
     S: Spec<Fr, WIDTH, RATE> + Clone + Copy,
@@ -69,7 +69,7 @@ where
         meta.enable_equality(expected);
 
         let rc = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
-        let sum = meta.advice_column();
+        let partial_sbox = meta.advice_column();
 
         Self::Config {
             input: state[..RATE].try_into().unwrap(),
@@ -78,7 +78,7 @@ where
                 meta,
                 state.try_into().unwrap(),
                 rc.try_into().unwrap(),
-                sum,
+                partial_sbox,
             ),
         }
     }
@@ -147,7 +147,7 @@ impl<const WIDTH: usize, const RATE: usize> Spec<Fr, WIDTH, RATE> for MySpec<WID
     }
 }
 
-const K: u32 = 7;
+const K: u32 = 6;
 
 fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
     name: &str,
@@ -190,6 +190,21 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
             .verify()
     );
 
+    println!(
+        "CircuitCost {:?}",
+        CircuitCost::<G1, _>::measure(K, &circuit)
+    );
+
+    println!(
+        "ModelCircuit {:?}",
+        halo2_proofs::dev::cost_model::from_circuit_to_model_circuit::<_, _, 56, 56>(
+            K,
+            &circuit,
+            vec![vec![output]],
+            halo2_proofs::dev::cost_model::CommitmentScheme::KZGSHPLONK
+        )
+    );
+
     c.bench_function(&prover_name, |b| {
         // Create a proof
         let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
@@ -205,16 +220,6 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
             .expect("proof generation should not fail")
         })
     });
-
-    println!(
-        "Cost {:?}",
-        halo2_proofs::dev::cost_model::from_circuit_to_model_circuit::<_, _, 56, 56>(
-            7,
-            &circuit,
-            vec![vec![output]],
-            halo2_proofs::dev::cost_model::CommitmentScheme::KZGSHPLONK
-        )
-    );
 
     // Create a proof
     let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
