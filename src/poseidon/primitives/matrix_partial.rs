@@ -85,6 +85,7 @@ fn generate_matrix_m_1_width_4k<F: FromUniformBytes<64> + Ord, const T: usize>()
 
     let mut matrix_partial = [[F::ONE; T]; T];
 
+    #[allow(clippy::manual_memcpy)] // Suppress Clippy false positive.
     for i in 0..T {
         matrix_partial[i][i] = diag[i];
     }

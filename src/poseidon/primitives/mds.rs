@@ -2,6 +2,7 @@ use ff::FromUniformBytes;
 
 use super::{grain::Grain, Mds};
 
+#[allow(dead_code)]
 pub(super) fn generate_mds<F: FromUniformBytes<64> + Ord, const T: usize>(
     grain: &mut Grain<F>,
     mut select: usize,

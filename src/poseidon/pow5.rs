@@ -1,14 +1,10 @@
 use core::panic;
 use std::convert::TryInto;
-use std::iter;
 
 use halo2_proofs::{
     arithmetic::Field,
     circuit::{AssignedCell, Cell, Chip, Layouter, Region, Value},
-    plonk::{
-        Advice, Any, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Fixed,
-        Selector,
-    },
+    plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Expression, Fixed, Selector},
     poly::Rotation,
 };
 
@@ -34,8 +30,8 @@ pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
     partial_rounds: usize,
     alpha: [u64; 4],
     round_constants: Vec<[F; WIDTH]>,
-    m_full: Mds<F, WIDTH>,
     #[allow(dead_code)]
+    m_full: Mds<F, WIDTH>,
     diag: Vec<F>,
 }
 
@@ -72,9 +68,9 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         let pre_rounds = 1;
         let half_full_rounds = S::full_rounds() / 2;
         let partial_rounds = S::partial_rounds();
-        let (round_constants, m_full, mds_partial) = S::constants();
+        let (round_constants, m_full, m_partial) = S::constants();
 
-        let diag: Vec<F> = (0..WIDTH).map(|i| mds_partial[i][i]).collect();
+        let diag: Vec<F> = (0..WIDTH).map(|i| m_partial[i][i]).collect();
 
         // This allows state words to be initialized (by constraining them equal to fixed
         // values), and used in a permutation from an arbitrary region. rc_a is used in
@@ -362,14 +358,14 @@ impl<
                 let load_input_word = |i: usize| {
                     let constraint_var = match input.0[i].clone() {
                         Some(PaddedWord::Message(word)) => word,
-                        Some(PaddedWord::Padding(padding_value)) => {
+                        Some(PaddedWord::Padding(_padding_value)) => {
                             panic!();
                             #[allow(unreachable_code)]
                             region.assign_fixed(
                                 || format!("load pad_{i}"),
                                 config.rc[i],
                                 1,
-                                || Value::known(padding_value),
+                                || Value::known(_padding_value),
                             )?
                         }
                         _ => panic!("Input is not padded"),
@@ -456,10 +452,10 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
             let mut t_3: Value<_> = input[i + 3]; // d
             t_3 = t_3 * Value::known(F::ONE + F::ONE) + t_0; // 2d + a + b
 
-            let mut t_4: Value<_> = t_1.into(); // c + d
+            let mut t_4: Value<_> = t_1; // c + d
             t_4 = t_4 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_3; // a + b + 4c + 6d
 
-            let mut t_5: Value<_> = t_0.into(); // a + b
+            let mut t_5: Value<_> = t_0; // a + b
             t_5 = t_5 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_2; // 4a + 6b + c + d
 
             input[i] = t_3 + t_5; // 5a + 7b + c + 3d
@@ -545,7 +541,6 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         offset: usize,
     ) -> Result<Self, Error> {
         Self::round(region, config, round, offset, config.s_full, |region| {
-            // TODO: make it work for T >= 4
             let q = self.0.iter().enumerate().map(|(idx, word)| {
                 word.0
                     .value()
@@ -576,7 +571,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
 
             let r: Value<Vec<_>> = q.map(|q| {
                 let r_0 = (q[0] + config.round_constants[round - 1][0]).pow(config.alpha);
-                let r_i = q[1..].into_iter().map(|q_i| *q_i);
+                let r_i = q[1..].iter().copied();
                 std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
             });
 
@@ -632,10 +627,15 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
             )
         };
 
-        if round == 0 {
-        } else if round > 5 && round < 61 {
+        let partial_rounds_begin = config.pre_rounds + config.half_full_rounds;
+        let partial_rounds_end = partial_rounds_begin + config.partial_rounds;
+
+        if round < config.pre_rounds {
+            // No constants are used in the preliminary round.
+        } else if (partial_rounds_begin..partial_rounds_end).contains(&round) {
             load_round_constant(0)?;
         } else {
+            // Full round.
             for i in 0..WIDTH {
                 load_round_constant(i)?;
             }
@@ -697,18 +697,11 @@ mod tests {
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Pow5Config<Fp, WIDTH, RATE> {
             let state = (0..WIDTH).map(|_| meta.advice_column()).collect::<Vec<_>>();
-            let partial_sbox = meta.advice_column();
+            let sum = meta.advice_column();
 
-            let rc_a = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
-            let rc_b = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
+            let rc = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
 
-            Pow5Chip::configure::<S>(
-                meta,
-                state.try_into().unwrap(),
-                partial_sbox,
-                rc_a.try_into().unwrap(),
-                rc_b.try_into().unwrap(),
-            )
+            Pow5Chip::configure::<S>(meta, state.try_into().unwrap(), rc.try_into().unwrap(), sum)
         }
 
         fn synthesize(
@@ -749,10 +742,11 @@ mod tests {
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap();
-            let (round_constants, mds, _) = S::constants();
+            let (round_constants, m_full, m_partial) = S::constants();
             poseidon::permute::<_, S, WIDTH, RATE>(
                 &mut expected_final_state,
-                &mds,
+                &m_full,
+                &m_partial,
                 &round_constants,
             );
 
@@ -818,20 +812,11 @@ mod tests {
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Pow5Config<Fp, WIDTH, RATE> {
             let state = (0..WIDTH).map(|_| meta.advice_column()).collect::<Vec<_>>();
-            let partial_sbox = meta.advice_column();
             let sum = meta.advice_column();
 
             let rc = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
 
-            meta.enable_constant(rc_b[0]);
-
-            Pow5Chip::configure::<S>(
-                meta,
-                state.try_into().unwrap(),
-                sum,
-                partial_sbox,
-                rc.try_into().unwrap(),
-            )
+            Pow5Chip::configure::<S>(meta, state.try_into().unwrap(), rc.try_into().unwrap(), sum)
         }
 
         fn synthesize(

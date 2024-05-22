@@ -10,6 +10,7 @@ fn generate_matrix_width_3<F: FromUniformBytes<64> + Ord, const T: usize>() -> M
 
     let mut matrix_full = [[F::ONE; T]; T];
 
+    #[allow(clippy::needless_range_loop)]
     for i in 0..T {
         matrix_full[i][i] = F::from_u128(2);
     }

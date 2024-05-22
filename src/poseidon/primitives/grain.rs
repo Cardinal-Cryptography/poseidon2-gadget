@@ -141,6 +141,7 @@ impl<F: PrimeField> Grain<F> {
 impl<F: FromUniformBytes<64>> Grain<F> {
     /// Returns the next field element from this Grain instantiation, without using
     /// rejection sampling.
+    #[allow(dead_code)]
     pub(super) fn next_field_element_without_rejection(&mut self) -> F {
         let mut bytes = [0u8; 64];
 
