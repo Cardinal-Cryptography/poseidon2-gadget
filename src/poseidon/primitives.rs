@@ -73,8 +73,8 @@ pub fn generate_constants<
 
     let mut grain = grain::Grain::new(SboxType::Pow, T as u16, r_f as u16, r_p as u16);
 
-    // No round constants in
-    let mut round_constants: Vec<_> = vec![[F::ZERO; T]; 1];
+    // No round constants in preliminary rounds.
+    let mut round_constants: Vec<_> = vec![[F::ZERO; T]; S::pre_rounds()];
 
     round_constants
         .extend((0..r_f / 2).map(|_| std::array::from_fn(|_| grain.next_field_element())));
