@@ -148,19 +148,6 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
                 .map(|i| meta.query_advice(state[i], Rotation::cur()))
                 .collect();
 
-            // Applies round operations to `cur`, but takes the value of the first state element
-            // from `cur_0` instead of `cur[0]`.
-            let apply_rc_and_pow_5 =
-                |cur: Vec<Expression<F>>, cur_0: Expression<F>, round_constant: Expression<F>| {
-                    cur.into_iter()
-                        .enumerate()
-                        .map(|(i, cur_i)| match i {
-                            0 => pow_5(cur_0.clone() + round_constant.clone()),
-                            _ => cur_i,
-                        })
-                        .collect()
-                };
-
             let apply_linear_layer = |cur: Vec<Expression<F>>| -> Vec<Expression<F>> {
                 let sum = cur
                     .iter()
@@ -174,19 +161,30 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             };
 
             // Apply first round.
-            let cur_0_0 = cur[0].clone();
-            let cur = apply_rc_and_pow_5(cur, cur_0_0, meta.query_fixed(rc[0], Rotation::cur()));
+            let cur = cur
+                .into_iter()
+                .enumerate()
+                .map(|(i, cur_i)| match i {
+                    0 => pow_5(cur_i + meta.query_fixed(rc[0], Rotation::cur())),
+                    _ => cur_i,
+                })
+                .collect();
             let cur = apply_linear_layer(cur);
 
             let partial_sbox_cell_value = meta.query_advice(partial_sbox, Rotation::cur());
             let partial_sbox_constraint = cur[0].clone() - partial_sbox_cell_value.clone();
 
             // Apply second round.
-            let cur = apply_rc_and_pow_5(
-                cur,
-                partial_sbox_cell_value,
-                meta.query_fixed(rc[1], Rotation::cur()),
-            );
+            let cur = cur
+                .into_iter()
+                .enumerate()
+                .map(|(i, cur_i)| match i {
+                    0 => pow_5(
+                        partial_sbox_cell_value.clone() + meta.query_fixed(rc[1], Rotation::cur()),
+                    ),
+                    _ => cur_i,
+                })
+                .collect();
             let cur = apply_linear_layer(cur);
 
             Constraints::with_selector(
@@ -551,6 +549,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
 struct Pow5State<F: Field, const WIDTH: usize>([StateWord<F>; WIDTH]);
 
 impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
+    // Applies the preliminary round and stores its result in the Plonk table.
     fn pre_round<const RATE: usize>(
         self,
         region: &mut Region<F>,
@@ -569,6 +568,8 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         })
     }
 
+    // Applies the full round and stores its result in the Plonk table. Also loads the constants
+    // for that round into the Plonk table.
     fn full_round<const RATE: usize>(
         self,
         region: &mut Region<F>,
@@ -588,7 +589,28 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         })
     }
 
-    // Applies the partial round twice, and stores a helper value in the `partial_sbox` column.
+    // Applies the partial round to `cur` using the provided `round_constant`.
+    fn partial_round_step<const RATE: usize>(
+        &self,
+        cur: Vec<Value<F>>,
+        config: &Pow5Config<F, WIDTH, RATE>,
+        round_constant: F,
+    ) -> Vec<Value<F>> {
+        let cur = cur.into_iter().enumerate().map(|(i, cur_i)| match i {
+            0 => (cur_i + Value::known(round_constant)).map(|v| v.pow(config.alpha)),
+            _ => cur_i,
+        });
+
+        let sum = cur.clone().reduce(|acc, v| acc + v).expect("WIDTH > 0");
+
+        cur.into_iter()
+            .enumerate()
+            .map(|(i, r)| r * Value::known(config.diag[i]) + sum)
+            .collect()
+    }
+
+    // Applies the partial round twice and stores its result in the Plonk table. Also populates
+    // the table with constants for that round and a helper value in the `partial_sbox` column.
     fn partial_round<const RATE: usize>(
         self,
         region: &mut Region<F>,
@@ -599,21 +621,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         Self::round(region, config, round, offset, config.s_partial, |region| {
             let cur: Vec<Value<F>> = self.0.iter().map(|word| word.0.value().cloned()).collect();
 
-            let step_fn = |cur: Vec<Value<F>>, round_constant: F| -> Vec<Value<F>> {
-                let cur = cur.into_iter().enumerate().map(|(i, cur_i)| match i {
-                    0 => (cur_i + Value::known(round_constant)).map(|v| v.pow(config.alpha)),
-                    _ => cur_i,
-                });
-
-                let sum = cur.clone().reduce(|acc, v| acc + v).expect("WIDTH > 0");
-
-                cur.into_iter()
-                    .enumerate()
-                    .map(|(i, r)| r * Value::known(config.diag[i]) + sum)
-                    .collect()
-            };
-
-            let cur = step_fn(cur, config.round_constants[round][0]);
+            let cur = self.partial_round_step(cur, config, config.round_constants[round][0]);
 
             region.assign_advice(
                 || format!("round_{round} partial_sbox"),
@@ -622,7 +630,7 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
                 || cur[0],
             )?;
 
-            let cur = step_fn(cur, config.round_constants[round + 1][0]);
+            let cur = self.partial_round_step(cur, config, config.round_constants[round + 1][0]);
 
             Ok((
                 round + config.partial_rounds_in_row,
