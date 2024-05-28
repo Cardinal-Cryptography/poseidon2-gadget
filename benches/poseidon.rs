@@ -24,6 +24,7 @@ use halo2_poseidon::poseidon::{
 };
 use halo2_proofs::poly::kzg::strategy::SingleStrategy;
 use halo2curves::bn256::{Bn256, Fr, G1};
+use log::info;
 use std::convert::TryInto;
 use std::marker::PhantomData;
 
@@ -183,19 +184,19 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
         _spec: PhantomData,
     };
 
-    println!(
+    info!(
         "Proof {:?}",
         MockProver::run(K, &circuit, vec![vec![output]])
             .unwrap()
             .verify()
     );
 
-    println!(
+    info!(
         "CircuitCost {:?}",
         CircuitCost::<G1, _>::measure(K, &circuit)
     );
 
-    println!(
+    info!(
         "ModelCircuit {:?}",
         halo2_proofs::dev::cost_model::from_circuit_to_model_circuit::<_, _, 56, 56>(
             K,
@@ -236,7 +237,7 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
 
     let strategy = SingleStrategy::new(&params);
     let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
-    println!(
+    info!(
         "Proof {:?}",
         verify_proof::<_, VerifierSHPLONK<_>, _, _, _>(
             &params,
@@ -264,6 +265,8 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
+    env_logger::init();
+
     bench_poseidon::<MySpec<3, 2>, 3, 2, 2>("WIDTH = 3, RATE = 2", c);
     bench_poseidon::<MySpec<4, 3>, 4, 3, 3>("WIDTH = 4, RATE = 3", c);
     bench_poseidon::<MySpec<8, 7>, 8, 7, 7>("WIDTH = 8, RATE = 7", c);
