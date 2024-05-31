@@ -132,11 +132,11 @@ impl<const WIDTH: usize, const RATE: usize> Spec<Fr, WIDTH, RATE> for MySpec<WID
     }
 
     fn partial_rounds() -> usize {
-        56
+        48
     }
 
     fn sbox(val: Fr) -> Fr {
-        val.pow_vartime([5])
+        val.pow_vartime([7])
     }
 
     fn secure_mds() -> usize {
@@ -198,7 +198,7 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
 
     info!(
         "ModelCircuit {:?}",
-        halo2_proofs::dev::cost_model::from_circuit_to_model_circuit::<_, _, 56, 56>(
+        halo2_proofs::dev::cost_model::from_circuit_to_model_circuit::<_, _, 48, 48>(
             K,
             &circuit,
             vec![vec![output]],
