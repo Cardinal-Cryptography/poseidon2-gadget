@@ -90,10 +90,11 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
         let s_partial = meta.selector();
         let s_pad_and_add = meta.selector();
 
-        let alpha = [5, 0, 0, 0];
+        let alpha = [7, 0, 0, 0];
         let pow_5 = |v: Expression<F>| {
             let v2 = v.clone() * v.clone();
-            v2.clone() * v2 * v
+            let v4 = v2.clone() * v2.clone();
+            v4 * v2 * v
         };
 
         meta.create_gate("pre round", |meta| {
