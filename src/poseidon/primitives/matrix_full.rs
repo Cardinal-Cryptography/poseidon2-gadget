@@ -31,23 +31,23 @@ fn generate_matrix_width_4k<F: FromUniformBytes<64> + Ord, const T: usize>() -> 
         [f(1), f(1), f(4), f(6)],
     ];
 
-    let mut matrix_full = [[F::ONE; T]; T];
-
-    if T == 4 {
-        for i in 0..T {
-            for j in 0..T {
-                matrix_full[i][j] = matrix_4_4[i][j];
-            }
-        }
-    }
-    if T > 4 {
-        for i in 0..T {
-            for j in 0..T {
-                let multiplier = if i / 4 == j / 4 { f(2) } else { f(1) };
-                matrix_full[i][j] = matrix_4_4[i % 4][j % 4] * multiplier;
-            }
-        }
-    }
+    let matrix_full = (0..T)
+        .map(|i| {
+            (0..T)
+                .map(|j| {
+                    if T > 4 && i / 4 == j / 4 {
+                        f(2) * matrix_4_4[i % 4][j % 4]
+                    } else {
+                        matrix_4_4[i % 4][j % 4]
+                    }
+                })
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("Row should be correctly created.")
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("Matrix should be correctly created.");
 
     matrix_full
 }
