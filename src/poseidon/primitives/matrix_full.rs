@@ -31,23 +31,27 @@ fn generate_matrix_width_4k<F: FromUniformBytes<64> + Ord, const T: usize>() -> 
         [f(1), f(1), f(4), f(6)],
     ];
 
-    (0..T)
-        .map(|i| {
-            (0..T)
-                .map(|j| {
-                    if T > 4 && i / 4 == j / 4 {
-                        f(2) * matrix_4_4[i % 4][j % 4]
-                    } else {
-                        matrix_4_4[i % 4][j % 4]
-                    }
-                })
-                .collect::<Vec<_>>()
-                .try_into()
-                .expect("Row should be correctly created.")
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .expect("Matrix should be correctly created.")
+    let mut matrix_full = [[F::ZERO; T]; T];
+
+    if T == 4 {
+        for i in 0..T {
+            for j in 0..T {
+                matrix_full[i][j] = matrix_4_4[i][j];
+            }
+        }
+    } else {
+        for i in 0..T {
+            for j in 0..T {
+                if i / 4 == j / 4 {
+                    matrix_full[i][j] = f(2) * matrix_4_4[i % 4][j % 4];
+                } else {
+                    matrix_full[i][j] = matrix_4_4[i % 4][j % 4];
+                }
+            }
+        }
+    }
+
+    matrix_full
 }
 
 /// Generate matrix for the Poseidon 2 full round, with `1` *not* subtracted from the diagonal.
