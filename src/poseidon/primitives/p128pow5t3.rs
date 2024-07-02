@@ -13,6 +13,10 @@ use super::{Mds, Spec};
 pub struct P128Pow5T3;
 
 impl Spec<Fp, 3, 2> for P128Pow5T3 {
+    fn pre_rounds() -> usize {
+        unimplemented!()
+    }
+
     fn full_rounds() -> usize {
         8
     }
@@ -39,6 +43,10 @@ impl Spec<Fp, 3, 2> for P128Pow5T3 {
 }
 
 impl Spec<Fq, 3, 2> for P128Pow5T3 {
+    fn pre_rounds() -> usize {
+        unimplemented!()
+    }
+
     fn full_rounds() -> usize {
         8
     }
@@ -92,6 +100,10 @@ mod tests {
     impl<F: FromUniformBytes<64> + Ord, const SECURE_MDS: usize> Spec<F, 3, 2>
         for P128Pow5T3Gen<F, SECURE_MDS>
     {
+        fn pre_rounds() -> usize {
+            unimplemented!()
+        }
+
         fn full_rounds() -> usize {
             8
         }
@@ -196,7 +208,12 @@ mod tests {
                 ]),
             ];
 
-            permute::<Fp, P128Pow5T3Gen<Fp, 0>, 3, 2>(&mut input, &fp::MDS, &fp::ROUND_CONSTANTS);
+            permute::<Fp, P128Pow5T3Gen<Fp, 0>, 3, 2>(
+                &mut input,
+                &fp::MDS,
+                &fp::MDS_INV, // TODO: m_partial is needed here, not inv.
+                &fp::ROUND_CONSTANTS,
+            );
             assert_eq!(input, expected_output);
         }
 
@@ -247,7 +264,12 @@ mod tests {
                 ]),
             ];
 
-            permute::<Fq, P128Pow5T3Gen<Fq, 0>, 3, 2>(&mut input, &fq::MDS, &fq::ROUND_CONSTANTS);
+            permute::<Fq, P128Pow5T3Gen<Fq, 0>, 3, 2>(
+                &mut input,
+                &fq::MDS,
+                &fq::MDS_INV, // TODO: m_partial is needed here, not inv.
+                &fq::ROUND_CONSTANTS,
+            );
             assert_eq!(input, expected_output);
         }
     }
@@ -255,7 +277,7 @@ mod tests {
     #[test]
     fn permute_test_vectors() {
         {
-            let (round_constants, mds, _) = super::P128Pow5T3::constants();
+            let (round_constants, m_full, m_partial) = super::P128Pow5T3::constants();
 
             for tv in crate::poseidon::primitives::test_vectors::fp::permute() {
                 let mut state = [
@@ -264,7 +286,12 @@ mod tests {
                     Fp::from_repr(tv.initial_state[2]).unwrap(),
                 ];
 
-                permute::<Fp, super::P128Pow5T3, 3, 2>(&mut state, &mds, &round_constants);
+                permute::<Fp, super::P128Pow5T3, 3, 2>(
+                    &mut state,
+                    &m_full,
+                    &m_partial,
+                    &round_constants,
+                );
 
                 for (expected, actual) in tv.final_state.iter().zip(state.iter()) {
                     assert_eq!(&actual.to_repr(), expected);
@@ -273,7 +300,7 @@ mod tests {
         }
 
         {
-            let (round_constants, mds, _) = super::P128Pow5T3::constants();
+            let (round_constants, m_full, m_partial) = super::P128Pow5T3::constants();
 
             for tv in crate::poseidon::primitives::test_vectors::fq::permute() {
                 let mut state = [
@@ -282,7 +309,12 @@ mod tests {
                     Fq::from_repr(tv.initial_state[2]).unwrap(),
                 ];
 
-                permute::<Fq, super::P128Pow5T3, 3, 2>(&mut state, &mds, &round_constants);
+                permute::<Fq, super::P128Pow5T3, 3, 2>(
+                    &mut state,
+                    &m_full,
+                    &m_partial,
+                    &round_constants,
+                );
 
                 for (expected, actual) in tv.final_state.iter().zip(state.iter()) {
                     assert_eq!(&actual.to_repr(), expected);

@@ -12,12 +12,15 @@ use halo2_proofs::arithmetic::Field;
 pub(crate) mod fp;
 pub(crate) mod fq;
 pub(crate) mod grain;
+pub(crate) mod matrix_full;
+pub(crate) mod matrix_partial;
 pub(crate) mod mds;
 
 #[cfg(test)]
 pub(crate) mod test_vectors;
 
 mod p128pow5t3;
+
 pub use p128pow5t3::P128Pow5T3;
 
 use grain::SboxType;
@@ -33,6 +36,9 @@ pub type Mds<F, const T: usize> = [[F; T]; T];
 
 /// A specification for a Poseidon permutation.
 pub trait Spec<F: Field, const T: usize, const RATE: usize>: fmt::Debug {
+    /// The number of preliminary rounds, which were introduced in Poseidon 2.
+    fn pre_rounds() -> usize;
+
     /// The number of full rounds for this specification.
     ///
     /// This must be an even number.
@@ -55,7 +61,7 @@ pub trait Spec<F: Field, const T: usize, const RATE: usize>: fmt::Debug {
     fn constants() -> (Vec<[F; T]>, Mds<F, T>, Mds<F, T>);
 }
 
-/// Generates `(round_constants, mds, mds^-1)` corresponding to this specification.
+/// Generates `(round_constants, matrix_full, matrix_partial_m_1)` corresponding to this specification.
 pub fn generate_constants<
     F: FromUniformBytes<64> + Ord,
     S: Spec<F, T, RATE>,
@@ -67,50 +73,75 @@ pub fn generate_constants<
 
     let mut grain = grain::Grain::new(SboxType::Pow, T as u16, r_f as u16, r_p as u16);
 
-    let round_constants = (0..(r_f + r_p))
-        .map(|_| {
-            let mut rc_row = [F::ZERO; T];
-            for (rc, value) in rc_row
-                .iter_mut()
-                .zip((0..T).map(|_| grain.next_field_element()))
-            {
-                *rc = value;
-            }
-            rc_row
-        })
-        .collect();
+    // No round constants in preliminary rounds.
+    let mut round_constants: Vec<_> = vec![[F::ZERO; T]; S::pre_rounds()];
 
-    let (mds, mds_inv) = mds::generate_mds::<F, T>(&mut grain, S::secure_mds());
+    round_constants
+        .extend((0..r_f / 2).map(|_| std::array::from_fn(|_| grain.next_field_element())));
 
-    (round_constants, mds, mds_inv)
+    round_constants.extend((0..r_p).map(|_| {
+        let mut rc_row = [F::ZERO; T];
+        rc_row[0] = grain.next_field_element();
+        rc_row
+    }));
+
+    round_constants
+        .extend((0..r_f / 2).map(|_| std::array::from_fn(|_| grain.next_field_element())));
+
+    let matrix_full = matrix_full::generate();
+    let matrix_partial_m_1 = matrix_partial::generate_matrix_m_1();
+
+    (round_constants, matrix_full, matrix_partial_m_1)
 }
 
 /// Runs the Poseidon permutation on the given state.
 pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>(
     state: &mut State<F, T>,
-    mds: &Mds<F, T>,
+    matrix_full: &Mds<F, T>,
+    matrix_part: &Mds<F, T>,
     round_constants: &[[F; T]],
 ) {
+    let r_pre = S::pre_rounds();
     let r_f = S::full_rounds() / 2;
     let r_p = S::partial_rounds();
 
-    let apply_mds = |state: &mut State<F, T>| {
+    let apply_matrix_full = |state: &mut State<F, T>| {
         let mut new_state = [F::ZERO; T];
         // Matrix multiplication
         #[allow(clippy::needless_range_loop)]
         for i in 0..T {
             for j in 0..T {
-                new_state[i] += mds[i][j] * state[j];
+                new_state[i] += matrix_full[i][j] * state[j];
             }
         }
         *state = new_state;
+    };
+
+    let apply_matrix_part = |state: &mut State<F, T>| {
+        let mut new_state = [F::ZERO; T];
+        // Matrix multiplication
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..T {
+            for j in 0..T {
+                if i == j {
+                    new_state[i] += (matrix_part[i][j] + F::ONE) * state[j];
+                } else {
+                    new_state[i] += matrix_part[i][j] * state[j];
+                }
+            }
+        }
+        *state = new_state;
+    };
+
+    let pre_round = |state: &mut State<F, T>, _: &[F; T]| {
+        apply_matrix_full(state);
     };
 
     let full_round = |state: &mut State<F, T>, rcs: &[F; T]| {
         for (word, rc) in state.iter_mut().zip(rcs.iter()) {
             *word = S::sbox(*word + rc);
         }
-        apply_mds(state);
+        apply_matrix_full(state);
     };
 
     let part_round = |state: &mut State<F, T>, rcs: &[F; T]| {
@@ -119,10 +150,11 @@ pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE:
         }
         // In a partial round, the S-box is only applied to the first state word.
         state[0] = S::sbox(state[0]);
-        apply_mds(state);
+        apply_matrix_part(state);
     };
 
     iter::empty()
+        .chain(iter::repeat(&pre_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_pre))
         .chain(iter::repeat(&full_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_f))
         .chain(iter::repeat(&part_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_p))
         .chain(iter::repeat(&full_round as &dyn Fn(&mut State<F, T>, &[F; T])).take(r_f))
@@ -136,7 +168,8 @@ pub(crate) fn permute<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE:
 fn poseidon_sponge<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>(
     state: &mut State<F, T>,
     input: Option<&Absorbing<F, RATE>>,
-    mds_matrix: &Mds<F, T>,
+    matrix_full: &Mds<F, T>,
+    matrix_part: &Mds<F, T>,
     round_constants: &[[F; T]],
 ) -> Squeezing<F, RATE> {
     if let Some(Absorbing(input)) = input {
@@ -147,7 +180,7 @@ fn poseidon_sponge<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: us
         }
     }
 
-    permute::<F, S, T, RATE>(state, mds_matrix, round_constants);
+    permute::<F, S, T, RATE>(state, matrix_full, matrix_part, round_constants);
 
     let mut output = [None; RATE];
     for (word, value) in output.iter_mut().zip(state.iter()) {
@@ -199,7 +232,8 @@ pub(crate) struct Sponge<
 > {
     mode: M,
     state: State<F, T>,
-    mds_matrix: Mds<F, T>,
+    matrix_full: Mds<F, T>,
+    matrix_part: Mds<F, T>,
     round_constants: Vec<[F; T]>,
     _marker: PhantomData<S>,
 }
@@ -209,7 +243,7 @@ impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
 {
     /// Constructs a new sponge for the given Poseidon specification.
     pub(crate) fn new(initial_capacity_element: F) -> Self {
-        let (round_constants, mds_matrix, _) = S::constants();
+        let (round_constants, matrix_full, matrix_part) = S::constants();
 
         let mode = Absorbing([None; RATE]);
         let mut state = [F::ZERO; T];
@@ -218,7 +252,8 @@ impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
         Sponge {
             mode,
             state,
-            mds_matrix,
+            matrix_full,
+            matrix_part,
             round_constants,
             _marker: PhantomData,
         }
@@ -237,7 +272,8 @@ impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
         let _ = poseidon_sponge::<F, S, T, RATE>(
             &mut self.state,
             Some(&self.mode),
-            &self.mds_matrix,
+            &self.matrix_full,
+            &self.matrix_part,
             &self.round_constants,
         );
         self.mode = Absorbing::init_with(value);
@@ -248,14 +284,16 @@ impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
         let mode = poseidon_sponge::<F, S, T, RATE>(
             &mut self.state,
             Some(&self.mode),
-            &self.mds_matrix,
+            &self.matrix_full,
+            &self.matrix_part,
             &self.round_constants,
         );
 
         Sponge {
             mode,
             state: self.state,
-            mds_matrix: self.mds_matrix,
+            matrix_full: self.matrix_full,
+            matrix_part: self.matrix_part,
             round_constants: self.round_constants,
             _marker: PhantomData,
         }
@@ -278,7 +316,8 @@ impl<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>
             self.mode = poseidon_sponge::<F, S, T, RATE>(
                 &mut self.state,
                 None,
-                &self.mds_matrix,
+                &self.matrix_full,
+                &self.matrix_part,
                 &self.round_constants,
             );
         }
@@ -380,6 +419,7 @@ impl<F: PrimeField, S: Spec<F, T, RATE>, const T: usize, const RATE: usize, cons
         {
             self.sponge.absorb(value);
         }
+
         self.sponge.finish_absorbing().squeeze()
     }
 }
@@ -394,7 +434,7 @@ mod tests {
     fn orchard_spec_equivalence() {
         let message = [pallas::Base::from(6), pallas::Base::from(42)];
 
-        let (round_constants, mds, _) = OrchardNullifier::constants();
+        let (round_constants, matrix_full, matrix_partial) = OrchardNullifier::constants();
 
         let hasher = Hash::<_, OrchardNullifier, ConstantLength<2>, 3, 2>::init();
         let result = hasher.hash(message);
@@ -402,7 +442,12 @@ mod tests {
         // The result should be equivalent to just directly applying the permutation and
         // taking the first state element as the output.
         let mut state = [message[0], message[1], pallas::Base::from_u128(2 << 64)];
-        permute::<_, OrchardNullifier, 3, 2>(&mut state, &mds, &round_constants);
+        permute::<_, OrchardNullifier, 3, 2>(
+            &mut state,
+            &matrix_full,
+            &matrix_partial,
+            &round_constants,
+        );
         assert_eq!(state[0], result);
     }
 }

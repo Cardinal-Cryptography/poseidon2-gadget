@@ -1,12 +1,10 @@
+use core::panic;
 use std::convert::TryInto;
-use std::iter;
 
 use halo2_proofs::{
     arithmetic::Field,
     circuit::{AssignedCell, Cell, Chip, Layouter, Region, Value},
-    plonk::{
-        Advice, Any, Column, ConstraintSystem, Constraints, Error, Expression, Fixed, Selector,
-    },
+    plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Expression, Fixed, Selector},
     poly::Rotation,
 };
 
@@ -20,20 +18,22 @@ use crate::utilities::Var;
 #[derive(Clone, Debug)]
 pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
     pub(crate) state: [Column<Advice>; WIDTH],
+    rc: [Column<Fixed>; WIDTH],
     partial_sbox: Column<Advice>,
-    rc_a: [Column<Fixed>; WIDTH],
-    rc_b: [Column<Fixed>; WIDTH],
+    s_pre: Selector,
     s_full: Selector,
     s_partial: Selector,
     s_pad_and_add: Selector,
 
+    pre_rounds: usize,
     half_full_rounds: usize,
-    half_partial_rounds: usize,
+    partial_rounds: usize,
+    partial_rounds_in_row: usize,
     alpha: [u64; 4],
     round_constants: Vec<[F; WIDTH]>,
-    m_reg: Mds<F, WIDTH>,
     #[allow(dead_code)]
-    m_inv: Mds<F, WIDTH>,
+    m_full: Mds<F, WIDTH>,
+    diag: Vec<F>,
 }
 
 /// A Poseidon chip using an $x^5$ S-Box.
@@ -58,40 +58,64 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
     pub fn configure<S: Spec<F, WIDTH, RATE>>(
         meta: &mut ConstraintSystem<F>,
         state: [Column<Advice>; WIDTH],
+        rc: [Column<Fixed>; WIDTH],
         partial_sbox: Column<Advice>,
-        rc_a: [Column<Fixed>; WIDTH],
-        rc_b: [Column<Fixed>; WIDTH],
     ) -> Pow5Config<F, WIDTH, RATE> {
         assert_eq!(RATE, WIDTH - 1);
         // Generate constants for the Poseidon permutation.
         // This gadget requires R_F and R_P to be even.
         assert!(S::full_rounds() & 1 == 0);
         assert!(S::partial_rounds() & 1 == 0);
+        let pre_rounds = S::pre_rounds();
         let half_full_rounds = S::full_rounds() / 2;
-        let half_partial_rounds = S::partial_rounds() / 2;
-        let (round_constants, m_reg, m_inv) = S::constants();
+        let partial_rounds = S::partial_rounds();
+        let partial_rounds_in_row = 2;
+        let (round_constants, m_full, m_partial) = S::constants();
+
+        let diag: Vec<F> = (0..WIDTH).map(|i| m_partial[i][i]).collect();
 
         // This allows state words to be initialized (by constraining them equal to fixed
         // values), and used in a permutation from an arbitrary region. rc_a is used in
         // every permutation round, while rc_b is empty in the initial and final full
         // rounds, so we use rc_b as "scratch space" for fixed values (enabling potential
         // layouter optimisations).
-        for column in iter::empty()
-            .chain(state.iter().cloned().map(Column::<Any>::from))
-            .chain(rc_b.iter().cloned().map(Column::<Any>::from))
-        {
+        for column in state {
             meta.enable_equality(column);
         }
 
+        rc.iter().for_each(|column| meta.enable_constant(*column));
+
+        let s_pre = meta.selector();
         let s_full = meta.selector();
         let s_partial = meta.selector();
         let s_pad_and_add = meta.selector();
 
-        let alpha = [5, 0, 0, 0];
+        let alpha = [7, 0, 0, 0];
         let pow_5 = |v: Expression<F>| {
             let v2 = v.clone() * v.clone();
-            v2.clone() * v2 * v
+            let v4 = v2.clone() * v2.clone();
+            v4 * v2 * v
         };
+
+        meta.create_gate("pre round", |meta| {
+            let s_pre = meta.query_selector(s_pre);
+            Constraints::with_selector(
+                s_pre,
+                (0..WIDTH)
+                    .map(|next_idx| {
+                        let state_next = meta.query_advice(state[next_idx], Rotation::next());
+                        let expr = (0..WIDTH)
+                            .map(|idx| {
+                                let state_cur = meta.query_advice(state[idx], Rotation::cur());
+                                state_cur * m_full[next_idx][idx]
+                            })
+                            .reduce(|acc, term| acc + term)
+                            .expect("WIDTH > 0");
+                        expr - state_next
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        });
 
         meta.create_gate("full round", |meta| {
             let s_full = meta.query_selector(s_full);
@@ -104,8 +128,8 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
                         let expr = (0..WIDTH)
                             .map(|idx| {
                                 let state_cur = meta.query_advice(state[idx], Rotation::cur());
-                                let rc_a = meta.query_fixed(rc_a[idx], Rotation::cur());
-                                pow_5(state_cur + rc_a) * m_reg[next_idx][idx]
+                                let rc = meta.query_fixed(rc[idx], Rotation::cur());
+                                pow_5(state_cur + rc) * m_full[next_idx][idx]
                             })
                             .reduce(|acc, term| acc + term)
                             .expect("WIDTH > 0");
@@ -115,49 +139,65 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
             )
         });
 
-        meta.create_gate("partial rounds", |meta| {
-            let cur_0 = meta.query_advice(state[0], Rotation::cur());
-            let mid_0 = meta.query_advice(partial_sbox, Rotation::cur());
-
-            let rc_a0 = meta.query_fixed(rc_a[0], Rotation::cur());
-            let rc_b0 = meta.query_fixed(rc_b[0], Rotation::cur());
-
+        // Constrains the state in the next row to be the result of applying 2 partial rounds to
+        // the state in the current row. Uses the `partial_sbox` column as a helper to keep
+        // the polynomial degrees low.
+        meta.create_gate("partial round", |meta| {
             let s_partial = meta.query_selector(s_partial);
 
-            use halo2_proofs::plonk::VirtualCells;
-            let mid = |idx: usize, meta: &mut VirtualCells<F>| {
-                let mid = mid_0.clone() * m_reg[idx][0];
-                (1..WIDTH).fold(mid, |acc, cur_idx| {
-                    let cur = meta.query_advice(state[cur_idx], Rotation::cur());
-                    let rc_a = meta.query_fixed(rc_a[cur_idx], Rotation::cur());
-                    acc + (cur + rc_a) * m_reg[idx][cur_idx]
-                })
-            };
+            let cur: Vec<Expression<F>> = (0..WIDTH)
+                .map(|i| meta.query_advice(state[i], Rotation::cur()))
+                .collect();
 
-            let next = |idx: usize, meta: &mut VirtualCells<F>| {
-                (0..WIDTH)
-                    .map(|next_idx| {
-                        let next = meta.query_advice(state[next_idx], Rotation::next());
-                        next * m_inv[idx][next_idx]
-                    })
+            let apply_linear_layer = |cur: Vec<Expression<F>>| -> Vec<Expression<F>> {
+                let sum = cur
+                    .iter()
+                    .cloned()
                     .reduce(|acc, next| acc + next)
-                    .expect("WIDTH > 0")
+                    .expect("WIDTH > 0");
+                cur.into_iter()
+                    .enumerate()
+                    .map(|(i, cur_i)| cur_i * diag[i] + sum.clone())
+                    .collect()
             };
 
-            let partial_round_linear = |idx: usize, meta: &mut VirtualCells<F>| {
-                let rc_b = meta.query_fixed(rc_b[idx], Rotation::cur());
-                mid(idx, meta) + rc_b - next(idx, meta)
-            };
+            // Apply first round.
+            let cur = cur
+                .into_iter()
+                .enumerate()
+                .map(|(i, cur_i)| match i {
+                    0 => pow_5(cur_i + meta.query_fixed(rc[0], Rotation::cur())),
+                    _ => cur_i,
+                })
+                .collect();
+            let cur = apply_linear_layer(cur);
+
+            let partial_sbox_cell_value = meta.query_advice(partial_sbox, Rotation::cur());
+            let partial_sbox_constraint = cur[0].clone() - partial_sbox_cell_value.clone();
+
+            // Apply second round.
+            let cur = cur
+                .into_iter()
+                .enumerate()
+                .map(|(i, cur_i)| match i {
+                    0 => pow_5(
+                        partial_sbox_cell_value.clone() + meta.query_fixed(rc[1], Rotation::cur()),
+                    ),
+                    _ => cur_i,
+                })
+                .collect();
+            let cur = apply_linear_layer(cur);
 
             Constraints::with_selector(
                 s_partial,
                 std::iter::empty()
-                    // state[0] round a
-                    .chain(Some(pow_5(cur_0 + rc_a0) - mid_0.clone()))
-                    // state[0] round b
-                    .chain(Some(pow_5(mid(0, meta) + rc_b0) - next(0, meta)))
-                    .chain((1..WIDTH).map(|idx| partial_round_linear(idx, meta)))
-                    .collect::<Vec<_>>(),
+                    .chain(Some(partial_sbox_constraint))
+                    .chain(
+                        cur.into_iter().enumerate().map(|(i, cur_i)| {
+                            cur_i - meta.query_advice(state[i], Rotation::next())
+                        }),
+                    )
+                    .collect::<Vec<Expression<F>>>(),
             )
         });
 
@@ -189,18 +229,20 @@ impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
 
         Pow5Config {
             state,
+            rc,
             partial_sbox,
-            rc_a,
-            rc_b,
+            s_pre,
             s_full,
             s_partial,
             s_pad_and_add,
+            pre_rounds,
             half_full_rounds,
-            half_partial_rounds,
+            partial_rounds,
+            partial_rounds_in_row,
             alpha,
             round_constants,
-            m_reg,
-            m_inv,
+            m_full,
+            diag,
         }
     }
 
@@ -241,24 +283,41 @@ impl<F: Field, S: Spec<F, WIDTH, RATE>, const WIDTH: usize, const RATE: usize>
                 // Load the initial state into this region.
                 let state = Pow5State::load(&mut region, config, initial_state)?;
 
-                let state = (0..config.half_full_rounds)
-                    .try_fold(state, |res, r| res.full_round(&mut region, config, r, r))?;
-
-                let state = (0..config.half_partial_rounds).try_fold(state, |res, r| {
-                    res.partial_round(
-                        &mut region,
-                        config,
-                        config.half_full_rounds + 2 * r,
-                        config.half_full_rounds + r,
-                    )
-                })?;
+                let state: Pow5State<F, WIDTH> = (0..config.pre_rounds)
+                    .try_fold(state, |res, r| res.pre_round(&mut region, config, r, r))?;
 
                 let state = (0..config.half_full_rounds).try_fold(state, |res, r| {
                     res.full_round(
                         &mut region,
                         config,
-                        config.half_full_rounds + 2 * config.half_partial_rounds + r,
-                        config.half_full_rounds + config.half_partial_rounds + r,
+                        config.pre_rounds + r,
+                        config.pre_rounds + r,
+                    )
+                })?;
+
+                let state = (0..config.partial_rounds / config.partial_rounds_in_row).try_fold(
+                    state,
+                    |res, r| {
+                        res.partial_round(
+                            &mut region,
+                            config,
+                            config.pre_rounds
+                                + config.half_full_rounds
+                                + r * config.partial_rounds_in_row,
+                            config.pre_rounds + config.half_full_rounds + r,
+                        )
+                    },
+                )?;
+
+                let state = (0..config.half_full_rounds).try_fold(state, |res, r| {
+                    res.full_round(
+                        &mut region,
+                        config,
+                        config.pre_rounds + config.half_full_rounds + config.partial_rounds + r,
+                        config.pre_rounds
+                            + config.half_full_rounds
+                            + config.partial_rounds / config.partial_rounds_in_row
+                            + r,
                     )
                 })?;
 
@@ -341,12 +400,16 @@ impl<
                 let load_input_word = |i: usize| {
                     let constraint_var = match input.0[i].clone() {
                         Some(PaddedWord::Message(word)) => word,
-                        Some(PaddedWord::Padding(padding_value)) => region.assign_fixed(
-                            || format!("load pad_{i}"),
-                            config.rc_b[i],
-                            1,
-                            || Value::known(padding_value),
-                        )?,
+                        Some(PaddedWord::Padding(_padding_value)) => {
+                            panic!();
+                            #[allow(unreachable_code)]
+                            region.assign_fixed(
+                                || format!("load pad_{i}"),
+                                config.rc[i],
+                                1,
+                                || Value::known(_padding_value),
+                            )?
+                        }
                         _ => panic!("Input is not padded"),
                     };
                     constraint_var
@@ -418,10 +481,96 @@ impl<F: Field> Var<F> for StateWord<F> {
     }
 }
 
+impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
+    fn matmul_4(&self, mut input: Vec<Value<F>>) -> Vec<Value<F>> {
+        for i in (0..WIDTH).step_by(4) {
+            let t_0 = input[i] + input[i + 1]; // a + b
+
+            let t_1 = input[i + 2] + input[i + 3]; // c + d
+
+            let mut t_2: Value<_> = input[i + 1]; // b
+            t_2 = t_2 * Value::known(F::ONE + F::ONE) + t_1; // 2b + c + d
+
+            let mut t_3: Value<_> = input[i + 3]; // d
+            t_3 = t_3 * Value::known(F::ONE + F::ONE) + t_0; // 2d + a + b
+
+            let mut t_4: Value<_> = t_1; // c + d
+            t_4 = t_4 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_3; // a + b + 4c + 6d
+
+            let mut t_5: Value<_> = t_0; // a + b
+            t_5 = t_5 * Value::known(F::ONE + F::ONE) * Value::known(F::ONE + F::ONE) + t_2; // 4a + 6b + c + d
+
+            input[i] = t_3 + t_5; // 5a + 7b + c + 3d
+            input[i + 1] = t_5; // 4a + 6b + c + d
+            input[i + 2] = t_2 + t_4; // a + 3b + 5c + 7d
+            input[i + 3] = t_4; // a + b + 4c + 6d
+        }
+        input
+    }
+
+    fn matmul_full(&self, input: Vec<Value<F>>) -> [Value<F>; WIDTH] {
+        match WIDTH {
+            3 => {
+                let mut sum = Value::known(F::ZERO);
+                sum = sum + input[0];
+                sum = sum + input[1];
+                sum = sum + input[2];
+
+                input
+                    .into_iter()
+                    .map(|r| r + sum)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
+            }
+            4 => self.matmul_4(input).try_into().unwrap(),
+            8 | 12 | 16 | 20 => {
+                let input = self.matmul_4(input);
+                let mut sum = [Value::known(F::ZERO); 4];
+                for i in 0..4 {
+                    sum[i] = input[i];
+                    for j in (4..WIDTH).step_by(4) {
+                        sum[i] = sum[i] + input[j + i];
+                    }
+                }
+                input
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, r)| r + sum[i % 4])
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Pow5State<F: Field, const WIDTH: usize>([StateWord<F>; WIDTH]);
 
 impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
+    // Applies the preliminary round and stores its result in the Plonk table.
+    fn pre_round<const RATE: usize>(
+        self,
+        region: &mut Region<F>,
+        config: &Pow5Config<F, WIDTH, RATE>,
+        round: usize,
+        offset: usize,
+    ) -> Result<Self, Error> {
+        Self::round(region, config, round, offset, config.s_pre, |_| {
+            let r: Vec<Value<F>> = self
+                .0
+                .iter()
+                .map(|word| word.0.value().map(|v| *v))
+                .collect();
+
+            Ok((round + 1, self.matmul_full(r)))
+        })
+    }
+
+    // Applies the full round and stores its result in the Plonk table. Also loads the constants
+    // for that round into the Plonk table.
     fn full_round<const RATE: usize>(
         self,
         region: &mut Region<F>,
@@ -435,20 +584,34 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
                     .value()
                     .map(|v| *v + config.round_constants[round][idx])
             });
-            let r: Value<Vec<F>> = q.map(|q| q.map(|q| q.pow(config.alpha))).collect();
-            let m = &config.m_reg;
-            let state = m.iter().map(|m_i| {
-                r.as_ref().map(|r| {
-                    r.iter()
-                        .enumerate()
-                        .fold(F::ZERO, |acc, (j, r_j)| acc + m_i[j] * r_j)
-                })
-            });
+            let r: Vec<_> = q.map(|q| q.map(|q| q.pow(config.alpha))).collect();
 
-            Ok((round + 1, state.collect::<Vec<_>>().try_into().unwrap()))
+            Ok((round + 1, self.matmul_full(r)))
         })
     }
 
+    // Applies the partial round to `cur` using the provided `round_constant`.
+    fn partial_round_step<const RATE: usize>(
+        &self,
+        cur: Vec<Value<F>>,
+        config: &Pow5Config<F, WIDTH, RATE>,
+        round_constant: F,
+    ) -> Vec<Value<F>> {
+        let cur = cur.into_iter().enumerate().map(|(i, cur_i)| match i {
+            0 => (cur_i + Value::known(round_constant)).map(|v| v.pow(config.alpha)),
+            _ => cur_i,
+        });
+
+        let sum = cur.clone().reduce(|acc, v| acc + v).expect("WIDTH > 0");
+
+        cur.into_iter()
+            .enumerate()
+            .map(|(i, r)| r * Value::known(config.diag[i]) + sum)
+            .collect()
+    }
+
+    // Applies the partial round twice and stores its result in the Plonk table. Also populates
+    // the table with constants for that round and a helper value in the `partial_sbox` column.
     fn partial_round<const RATE: usize>(
         self,
         region: &mut Region<F>,
@@ -457,70 +620,23 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         offset: usize,
     ) -> Result<Self, Error> {
         Self::round(region, config, round, offset, config.s_partial, |region| {
-            let m = &config.m_reg;
-            let p: Value<Vec<_>> = self.0.iter().map(|word| word.0.value().cloned()).collect();
+            let cur: Vec<Value<F>> = self.0.iter().map(|word| word.0.value().cloned()).collect();
 
-            let r: Value<Vec<_>> = p.map(|p| {
-                let r_0 = (p[0] + config.round_constants[round][0]).pow(config.alpha);
-                let r_i = p[1..]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p_i)| *p_i + config.round_constants[round][i + 1]);
-                std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
-            });
+            let cur = self.partial_round_step(cur, config, config.round_constants[round][0]);
 
             region.assign_advice(
                 || format!("round_{round} partial_sbox"),
                 config.partial_sbox,
                 offset,
-                || r.as_ref().map(|r| r[0]),
+                || cur[0],
             )?;
 
-            let p_mid: Value<Vec<_>> = m
-                .iter()
-                .map(|m_i| {
-                    r.as_ref().map(|r| {
-                        m_i.iter()
-                            .zip(r.iter())
-                            .fold(F::ZERO, |acc, (m_ij, r_j)| acc + *m_ij * r_j)
-                    })
-                })
-                .collect();
+            let cur = self.partial_round_step(cur, config, config.round_constants[round + 1][0]);
 
-            // Load the second round constants.
-            let mut load_round_constant = |i: usize| {
-                region.assign_fixed(
-                    || format!("round_{} rc_{}", round + 1, i),
-                    config.rc_b[i],
-                    offset,
-                    || Value::known(config.round_constants[round + 1][i]),
-                )
-            };
-            for i in 0..WIDTH {
-                load_round_constant(i)?;
-            }
-
-            let r_mid: Value<Vec<_>> = p_mid.map(|p| {
-                let r_0 = (p[0] + config.round_constants[round + 1][0]).pow(config.alpha);
-                let r_i = p[1..]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p_i)| *p_i + config.round_constants[round + 1][i + 1]);
-                std::iter::empty().chain(Some(r_0)).chain(r_i).collect()
-            });
-
-            let state: Vec<Value<_>> = m
-                .iter()
-                .map(|m_i| {
-                    r_mid.as_ref().map(|r| {
-                        m_i.iter()
-                            .zip(r.iter())
-                            .fold(F::ZERO, |acc, (m_ij, r_j)| acc + *m_ij * r_j)
-                    })
-                })
-                .collect();
-
-            Ok((round + 2, state.try_into().unwrap()))
+            Ok((
+                round + config.partial_rounds_in_row,
+                cur.try_into().unwrap(),
+            ))
         })
     }
 
@@ -552,16 +668,29 @@ impl<F: Field, const WIDTH: usize> Pow5State<F, WIDTH> {
         round_gate.enable(region, offset)?;
 
         // Load the round constants.
-        let mut load_round_constant = |i: usize| {
+        let mut load_round_constant = |round: usize, i, column| {
             region.assign_fixed(
                 || format!("round_{round} rc_{i}"),
-                config.rc_a[i],
+                config.rc[column],
                 offset,
                 || Value::known(config.round_constants[round][i]),
             )
         };
-        for i in 0..WIDTH {
-            load_round_constant(i)?;
+
+        let partial_rounds_begin = config.pre_rounds + config.half_full_rounds;
+        let partial_rounds_end = partial_rounds_begin + config.partial_rounds;
+
+        if round < config.pre_rounds {
+            // No constants are used in the preliminary round.
+        } else if (partial_rounds_begin..partial_rounds_end).contains(&round) {
+            for i in 0..config.partial_rounds_in_row {
+                load_round_constant(round + i, 0, i)?;
+            }
+        } else {
+            // Full round.
+            for i in 0..WIDTH {
+                load_round_constant(round, i, i)?;
+            }
         }
 
         // Compute the next round's state.
@@ -622,15 +751,13 @@ mod tests {
             let state = (0..WIDTH).map(|_| meta.advice_column()).collect::<Vec<_>>();
             let partial_sbox = meta.advice_column();
 
-            let rc_a = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
-            let rc_b = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
+            let rc = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
 
             Pow5Chip::configure::<S>(
                 meta,
                 state.try_into().unwrap(),
+                rc.try_into().unwrap(),
                 partial_sbox,
-                rc_a.try_into().unwrap(),
-                rc_b.try_into().unwrap(),
             )
         }
 
@@ -672,10 +799,11 @@ mod tests {
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap();
-            let (round_constants, mds, _) = S::constants();
+            let (round_constants, m_full, m_partial) = S::constants();
             poseidon::permute::<_, S, WIDTH, RATE>(
                 &mut expected_final_state,
-                &mds,
+                &m_full,
+                &m_partial,
                 &round_constants,
             );
 
@@ -743,17 +871,13 @@ mod tests {
             let state = (0..WIDTH).map(|_| meta.advice_column()).collect::<Vec<_>>();
             let partial_sbox = meta.advice_column();
 
-            let rc_a = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
-            let rc_b = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
-
-            meta.enable_constant(rc_b[0]);
+            let rc = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
 
             Pow5Chip::configure::<S>(
                 meta,
                 state.try_into().unwrap(),
+                rc.try_into().unwrap(),
                 partial_sbox,
-                rc_a.try_into().unwrap(),
-                rc_b.try_into().unwrap(),
             )
         }
 
