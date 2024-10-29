@@ -17,7 +17,7 @@ use crate::utilities::Var;
 /// Configuration for a [`Pow5Chip`].
 #[derive(Clone, Debug)]
 pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
-    pub(crate) state: [Column<Advice>; WIDTH],
+    pub state: [Column<Advice>; WIDTH],
     rc: [Column<Fixed>; WIDTH],
     partial_sbox: Column<Advice>,
     s_pre: Selector,
