@@ -42,7 +42,7 @@ pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
 /// per row for partial rounds.
 #[derive(Clone, Debug)]
 pub struct Pow5Chip<F: Field, const WIDTH: usize, const RATE: usize> {
-    config: Pow5Config<F, WIDTH, RATE>,
+    pub config: Pow5Config<F, WIDTH, RATE>,
 }
 
 impl<F: Field, const WIDTH: usize, const RATE: usize> Pow5Chip<F, WIDTH, RATE> {
