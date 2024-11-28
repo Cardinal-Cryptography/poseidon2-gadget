@@ -17,6 +17,7 @@ use crate::utilities::Var;
 /// Configuration for a [`Pow5Chip`].
 #[derive(Clone, Debug)]
 pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
+    /// Columns storing state of the permutation.
     pub state: [Column<Advice>; WIDTH],
     rc: [Column<Fixed>; WIDTH],
     partial_sbox: Column<Advice>,
@@ -42,6 +43,7 @@ pub struct Pow5Config<F: Field, const WIDTH: usize, const RATE: usize> {
 /// per row for partial rounds.
 #[derive(Clone, Debug)]
 pub struct Pow5Chip<F: Field, const WIDTH: usize, const RATE: usize> {
+    /// Configuration for this chip.
     pub config: Pow5Config<F, WIDTH, RATE>,
 }
 

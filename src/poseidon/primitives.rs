@@ -426,28 +426,75 @@ impl<F: PrimeField, S: Spec<F, T, RATE>, const T: usize, const RATE: usize, cons
 
 #[cfg(test)]
 mod tests {
-    use super::{permute, ConstantLength, Hash, P128Pow5T3 as OrchardNullifier, Spec};
-    use ff::PrimeField;
-    use halo2curves::pasta::pallas;
+    use ff::{Field, FromUniformBytes};
+
+    use super::{generate_constants, permute, Mds, Spec};
+    use halo2curves::bn256::Fr;
+
+    fn from_hex(a: &str) -> Fr {
+        let mut a = hex::decode(a).unwrap();
+        a.reverse();
+        a.extend([0; 32]);
+        let a: [u8; 64] = a.try_into().unwrap();
+        Fr::from_uniform_bytes(&a)
+    }
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum Poseidon2Pow7TestSpec {}
+
+    impl Spec<Fr, 8, 7> for Poseidon2Pow7TestSpec {
+        fn pre_rounds() -> usize {
+            1
+        }
+
+        fn full_rounds() -> usize {
+            8
+        }
+
+        fn partial_rounds() -> usize {
+            48
+        }
+
+        fn sbox(val: Fr) -> Fr {
+            val.pow_vartime([7])
+        }
+
+        fn secure_mds() -> usize {
+            0
+        }
+
+        fn constants() -> (Vec<[Fr; 8]>, Mds<Fr, 8>, Mds<Fr, 8>) {
+            generate_constants::<Fr, Self, 8, 7>()
+        }
+    }
 
     #[test]
-    fn orchard_spec_equivalence() {
-        let message = [pallas::Base::from(6), pallas::Base::from(42)];
+    fn poseidon2_pow7_permute() {
+        let mut state: [Fr; 8] = Default::default();
+        for i in 0..8 {
+            state[i] = Fr::from(i as u64);
+        }
+        let (round_constants, matrix_full, matrix_partial) = Poseidon2Pow7TestSpec::constants();
 
-        let (round_constants, matrix_full, matrix_partial) = OrchardNullifier::constants();
-
-        let hasher = Hash::<_, OrchardNullifier, ConstantLength<2>, 3, 2>::init();
-        let result = hasher.hash(message);
-
-        // The result should be equivalent to just directly applying the permutation and
-        // taking the first state element as the output.
-        let mut state = [message[0], message[1], pallas::Base::from_u128(2 << 64)];
-        permute::<_, OrchardNullifier, 3, 2>(
+        permute::<Fr, Poseidon2Pow7TestSpec, 8, 7>(
             &mut state,
             &matrix_full,
             &matrix_partial,
             &round_constants,
         );
-        assert_eq!(state[0], result);
+
+        assert_eq!(
+            state,
+            [
+                from_hex("25bd6b18db8af6d02b96e2d3ad9a0e8c0a3f8fc32a7b90ff5d558b650bdc6e14"),
+                from_hex("1782f613fd4605f04abbf319e95a4bf7958a82a91adc48333f9e9f208178b824"),
+                from_hex("064d3832f1ab6cb38c3dc851596597876a88d9b43e21635bf1ad53d9cfd2edb5"),
+                from_hex("2cdfbf1065af6978aa5a44e1ba2ea31e53516229c7010144fbcb910d087dc379"),
+                from_hex("0cb59531a220779f18c229dc3ebf2e1e617be83de30292ed418ef2a508d645d4"),
+                from_hex("120eaca85e4c8e27e4effd1ea4c8d6c0c1ee86262d889086ece8294487ddc59e"),
+                from_hex("19aa1e72638e9bd26c37708effa390d7e8dcfb6340cd818d2473fdab1cc5700d"),
+                from_hex("09cfb67fc60f69d358bb2b8c3666bbbb46f4986f2aaa32c719b99254b7b243ac"),
+            ]
+        );
     }
 }
