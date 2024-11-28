@@ -428,7 +428,7 @@ impl<F: PrimeField, S: Spec<F, T, RATE>, const T: usize, const RATE: usize, cons
 mod tests {
     use ff::{Field, FromUniformBytes};
 
-    use super::{generate_constants, permute, Mds, Spec};
+    use super::{generate_constants, permute, ConstantLength, Hash, Mds, Spec};
     use halo2curves::bn256::Fr;
 
     fn from_hex(a: &str) -> Fr {
@@ -495,6 +495,24 @@ mod tests {
                 from_hex("19aa1e72638e9bd26c37708effa390d7e8dcfb6340cd818d2473fdab1cc5700d"),
                 from_hex("09cfb67fc60f69d358bb2b8c3666bbbb46f4986f2aaa32c719b99254b7b243ac"),
             ]
+        );
+    }
+
+    #[test]
+    fn poseidon2_pow7_hash() {
+        let sponge = Hash::<Fr, Poseidon2Pow7TestSpec, ConstantLength<7>, 8, 7>::init();
+        let mut message: [Fr; 7] = Default::default();
+
+        for i in 0..7 {
+            message[i] = Fr::from(i as u64);
+        }
+
+        let hash_result = sponge.hash(message);
+
+        // First element of a permutation result for [0, 1, 2, 3, 4, 5, 6, (7 << 64)]
+        assert_eq!(
+            hash_result,
+            from_hex("2b2dfc88c06b895f5504e0138f0efa1ed8c63c2f797c8443c2d66be12a50b63b")
         );
     }
 }
