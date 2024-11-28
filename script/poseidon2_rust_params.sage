@@ -6,15 +6,15 @@ import itertools
 ###########################################################################
 # p = 18446744069414584321 # GoldiLocks
 # p = 2013265921 # BabyBear
-p = 52435875175126190479447740508185965837690552500527637822603658699938581184513 # BLS12-381
-# p = 21888242871839275222246405745257275088548364400416034343698204186575808495617 # BN254/BN256
+# p = 52435875175126190479447740508185965837690552500527637822603658699938581184513 # BLS12-381
+p = 21888242871839275222246405745257275088548364400416034343698204186575808495617 # BN254/BN256
 # p = 28948022309329048855892746252171976963363056481941560715954676764349967630337 # Pasta (Pallas)
 # p = 28948022309329048855892746252171976963363056481941647379679742748393362948097 # Pasta (Vesta)
 
 n = len(p.bits()) # bit
 # t = 12 # GoldiLocks (t = 12 for sponge, t = 8 for compression)
 # t = 16 # BabyBear (t = 24 for sponge, t = 16 for compression)
-t = 3 # BN254/BN256, BLS12-381, Pallas, Vesta (t = 3 for sponge, t = 2 for compression)
+t = 8 # BN254/BN256, we use rate size 7
 
 FIELD = 1
 SBOX = 0
@@ -27,7 +27,7 @@ def get_alpha(p):
             break
     return alpha
 
-alpha = get_alpha(p)
+alpha = 7
 
 def get_sbox_cost(R_F, R_P, N, t):
     return int(t * R_F + R_P)
@@ -42,7 +42,7 @@ def poseidon_calc_final_numbers_fixed(p, t, alpha, M, security_margin):
     N = int(n * t)
     cost_function = get_sbox_cost
     ret_list = []
-    (R_F, R_P) = find_FD_round_numbers(p, t, alpha, M, cost_function, security_margin)
+    (R_F, R_P) = 8, 48
     min_sbox_cost = cost_function(R_F, R_P, N, t)
     ret_list.append(R_F)
     ret_list.append(R_P)
