@@ -1,3 +1,5 @@
+# This is a copy of a script from https://github.com/HorizenLabs/poseidon2/blob/main/poseidon2_rust_params.sage with adjusted parameters
+
 # Remark: This script contains functionality for GF(2^n), but currently works only over GF(p)! A few small adaptations are needed for GF(2^n).
 from sage.rings.polynomial.polynomial_gf2x import GF2X_BuildIrred_list
 from math import *
