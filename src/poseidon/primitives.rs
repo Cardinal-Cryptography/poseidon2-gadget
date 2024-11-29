@@ -471,8 +471,8 @@ mod tests {
     #[test]
     fn poseidon2_pow7_permute() {
         let mut state: [Fr; 8] = Default::default();
-        for i in 0..8 {
-            state[i] = Fr::from(i as u64);
+        for (i, state_element) in state.iter_mut().enumerate() {
+            *state_element = Fr::from(i as u64);
         }
         let (round_constants, matrix_full, matrix_partial) = Poseidon2Pow7TestSpec::constants();
 
@@ -503,8 +503,8 @@ mod tests {
         let sponge = Hash::<Fr, Poseidon2Pow7TestSpec, ConstantLength<7>, 8, 7>::init();
         let mut message: [Fr; 7] = Default::default();
 
-        for i in 0..7 {
-            message[i] = Fr::from(i as u64);
+        for (i, message_element) in message.iter_mut().enumerate() {
+            *message_element = Fr::from(i as u64);
         }
 
         let hash_result = sponge.hash(message);
