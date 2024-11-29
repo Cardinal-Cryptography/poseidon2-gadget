@@ -510,6 +510,7 @@ mod tests {
         let hash_result = sponge.hash(message);
 
         // First element of a permutation result for [0, 1, 2, 3, 4, 5, 6, (7 << 64)]
+        // Last element of the initial state is the value of initial_capacity_element() for ConstantLength<7>.
         assert_eq!(
             hash_result,
             from_hex("2b2dfc88c06b895f5504e0138f0efa1ed8c63c2f797c8443c2d66be12a50b63b")
