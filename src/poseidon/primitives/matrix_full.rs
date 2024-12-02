@@ -31,7 +31,7 @@ fn generate_matrix_width_4k<F: FromUniformBytes<64> + Ord, const T: usize>() -> 
         [f(1), f(1), f(4), f(6)],
     ];
 
-    let matrix_full = (0..T)
+    (0..T)
         .map(|i| {
             (0..T)
                 .map(|j| {
@@ -47,9 +47,7 @@ fn generate_matrix_width_4k<F: FromUniformBytes<64> + Ord, const T: usize>() -> 
         })
         .collect::<Vec<_>>()
         .try_into()
-        .expect("Matrix should be correctly created.");
-
-    matrix_full
+        .expect("Matrix should be correctly created.")
 }
 
 /// Generate matrix for the Poseidon 2 full round, with `1` *not* subtracted from the diagonal.
