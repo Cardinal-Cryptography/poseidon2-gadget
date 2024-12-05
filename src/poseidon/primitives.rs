@@ -504,7 +504,7 @@ mod tests {
 
         let hash_result = sponge.hash([42].map(Fr::from));
 
-        // First element of the permutation result for [42, 0, 0, 0, 0, 0, (1 << 64)]
+        // First element of the permutation result for [42, 0, 0, 0, 0, 0, 0, (1 << 64)]
         // Last element of the initial state is the value of initial_capacity_element() for ConstantLength<1>.
         assert_eq!(
             hash_result,
