@@ -409,7 +409,7 @@ impl<
                         ),
                         Some(PaddedWord::Padding(padding_value)) => region
                             .assign_advice_from_constant(
-                                || format!("load input_{i}"),
+                                || format!("load pad_{i}"),
                                 config.state[i],
                                 1,
                                 padding_value,
