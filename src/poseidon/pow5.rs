@@ -402,11 +402,11 @@ impl<
                 let load_input_word = |i: usize| {
                     let constraint_var = match input.0[i].clone() {
                         Some(PaddedWord::Message(word)) => word,
-                        Some(PaddedWord::Padding(_padding_value)) => region.assign_fixed(
+                        Some(PaddedWord::Padding(padding_value)) => region.assign_fixed(
                             || format!("load pad_{i}"),
                             config.rc[i],
                             1,
-                            || Value::known(_padding_value),
+                            || Value::known(padding_value),
                         )?,
                         _ => panic!("Input is not padded"),
                     };
