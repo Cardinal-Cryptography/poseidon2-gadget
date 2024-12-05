@@ -410,14 +410,16 @@ impl<
                         )?,
                         _ => panic!("Input is not padded"),
                     };
-                    constraint_var
+                    let word = constraint_var
                         .copy_advice(
                             || format!("load input_{i}"),
                             &mut region,
                             config.state[i],
                             1,
                         )
-                        .map(StateWord)
+                        .map(StateWord);
+                    println!("i= {}, word={:?}", i, word);
+                    word
                 };
                 let input: Result<Vec<_>, Error> = (0..RATE).map(load_input_word).collect();
                 let input = input?;
