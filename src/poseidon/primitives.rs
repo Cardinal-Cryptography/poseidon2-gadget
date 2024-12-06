@@ -499,17 +499,40 @@ mod tests {
     }
 
     #[test]
-    fn poseidon2_pow7_hash() {
+    fn poseidon2_pow7_hash_1_element() {
+        let sponge = Hash::<Fr, Poseidon2Pow7TestSpec, ConstantLength<1>, 8, 7>::init();
+
+        let hash_result = sponge.hash([42].map(Fr::from));
+
+        // First element of the permutation result for [42, 0, 0, 0, 0, 0, 0, (1 << 64)]
+        // Last element of the initial state is the value of initial_capacity_element() for ConstantLength<1>.
+        assert_eq!(
+            hash_result,
+            from_hex("25ef9eb9e686931547b65d4715e20ce1025096ce47bc583c8a0c04dffada82aa")
+        );
+    }
+
+    #[test]
+    fn poseidon2_pow7_hash_6_elements() {
+        let sponge = Hash::<Fr, Poseidon2Pow7TestSpec, ConstantLength<6>, 8, 7>::init();
+
+        let hash_result = sponge.hash([0, 1, 2, 3, 4, 5].map(Fr::from));
+
+        // First element of the permutation result for [0, 1, 2, 3, 4, 5, 0, (6 << 64)]
+        // Last element of the initial state is the value of initial_capacity_element() for ConstantLength<6>.
+        assert_eq!(
+            hash_result,
+            from_hex("0ea4c4cfe25c8eb01181d76ee73f8405877984750ce196230c70a2fe8e643ae2")
+        );
+    }
+
+    #[test]
+    fn poseidon2_pow7_hash_7_elements() {
         let sponge = Hash::<Fr, Poseidon2Pow7TestSpec, ConstantLength<7>, 8, 7>::init();
-        let mut message: [Fr; 7] = Default::default();
 
-        for (i, message_element) in message.iter_mut().enumerate() {
-            *message_element = Fr::from(i as u64);
-        }
+        let hash_result = sponge.hash([0, 1, 2, 3, 4, 5, 6].map(Fr::from));
 
-        let hash_result = sponge.hash(message);
-
-        // First element of a permutation result for [0, 1, 2, 3, 4, 5, 6, (7 << 64)]
+        // First element of the permutation result for [0, 1, 2, 3, 4, 5, 6, (7 << 64)]
         // Last element of the initial state is the value of initial_capacity_element() for ConstantLength<7>.
         assert_eq!(
             hash_result,

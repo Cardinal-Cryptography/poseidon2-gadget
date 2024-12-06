@@ -400,28 +400,23 @@ impl<
 
                 // Load the input into this region.
                 let load_input_word = |i: usize| {
-                    let constraint_var = match input.0[i].clone() {
-                        Some(PaddedWord::Message(word)) => word,
-                        Some(PaddedWord::Padding(_padding_value)) => {
-                            panic!();
-                            #[allow(unreachable_code)]
-                            region.assign_fixed(
-                                || format!("load pad_{i}"),
-                                config.rc[i],
-                                1,
-                                || Value::known(_padding_value),
-                            )?
-                        }
-                        _ => panic!("Input is not padded"),
-                    };
-                    constraint_var
-                        .copy_advice(
+                    match input.0[i].clone() {
+                        Some(PaddedWord::Message(word)) => word.copy_advice(
                             || format!("load input_{i}"),
                             &mut region,
                             config.state[i],
                             1,
-                        )
-                        .map(StateWord)
+                        ),
+                        Some(PaddedWord::Padding(padding_value)) => region
+                            .assign_advice_from_constant(
+                                || format!("load pad_{i}"),
+                                config.state[i],
+                                1,
+                                padding_value,
+                            ),
+                        _ => panic!("Input is not padded"),
+                    }
+                    .map(StateWord)
                 };
                 let input: Result<Vec<_>, Error> = (0..RATE).map(load_input_word).collect();
                 let input = input?;

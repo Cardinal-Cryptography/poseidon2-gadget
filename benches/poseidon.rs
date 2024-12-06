@@ -73,7 +73,7 @@ where
         let partial_sbox = meta.advice_column();
 
         Self::Config {
-            input: state[..RATE].try_into().unwrap(),
+            input: state[..L].try_into().unwrap(),
             expected,
             poseidon_config: Pow5Chip::configure::<S>(
                 meta,
@@ -269,7 +269,15 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     bench_poseidon::<MySpec<3, 2>, 3, 2, 2>("WIDTH = 3, RATE = 2", c);
     bench_poseidon::<MySpec<4, 3>, 4, 3, 3>("WIDTH = 4, RATE = 3", c);
-    bench_poseidon::<MySpec<8, 7>, 8, 7, 7>("WIDTH = 8, RATE = 7", c);
+
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 1>("WIDTH = 8, RATE = 7, LENGTH = 1", c);
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 2>("WIDTH = 8, RATE = 7, LENGTH = 2", c);
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 3>("WIDTH = 8, RATE = 7, LENGTH = 3", c);
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 4>("WIDTH = 8, RATE = 7, LENGTH = 4", c);
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 5>("WIDTH = 8, RATE = 7, LENGTH = 5", c);
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 6>("WIDTH = 8, RATE = 7, LENGTH = 6", c);
+    bench_poseidon::<MySpec<8, 7>, 8, 7, 7>("WIDTH = 8, RATE = 7, LENGTH = 7", c);
+
     bench_poseidon::<MySpec<12, 11>, 12, 11, 11>("WIDTH = 12, RATE = 11", c);
     bench_poseidon::<MySpec<16, 15>, 16, 15, 15>("WIDTH = 16, RATE = 15", c);
 }
