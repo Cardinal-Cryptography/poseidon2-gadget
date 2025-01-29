@@ -8,7 +8,7 @@ use ff::PrimeField;
 use group::ff::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Chip, Layouter},
-    plonk::Error,
+    plonk::ErrorFront,
 };
 
 mod pow5;
@@ -38,7 +38,7 @@ pub trait PoseidonInstructions<F: Field, S: Spec<F, T, RATE>, const T: usize, co
         &self,
         layouter: &mut impl Layouter<F>,
         initial_state: &State<Self::Word, T>,
-    ) -> Result<State<Self::Word, T>, Error>;
+    ) -> Result<State<Self::Word, T>, ErrorFront>;
 }
 
 /// The set of circuit instructions required to use the [`Sponge`] and [`Hash`] gadgets.
@@ -53,8 +53,10 @@ pub trait PoseidonSpongeInstructions<
 >: PoseidonInstructions<F, S, T, RATE>
 {
     /// Returns the initial empty state for the given domain.
-    fn initial_state(&self, layouter: &mut impl Layouter<F>)
-        -> Result<State<Self::Word, T>, Error>;
+    fn initial_state(
+        &self,
+        layouter: &mut impl Layouter<F>,
+    ) -> Result<State<Self::Word, T>, ErrorFront>;
 
     /// Adds the given input to the state.
     fn add_input(
@@ -62,7 +64,7 @@ pub trait PoseidonSpongeInstructions<
         layouter: &mut impl Layouter<F>,
         initial_state: &State<Self::Word, T>,
         input: &Absorbing<PaddedWord<F>, RATE>,
-    ) -> Result<State<Self::Word, T>, Error>;
+    ) -> Result<State<Self::Word, T>, ErrorFront>;
 
     /// Extracts sponge output from the given state.
     fn get_output(state: &State<Self::Word, T>) -> Squeezing<Self::Word, RATE>;
@@ -111,7 +113,7 @@ fn poseidon_sponge<
     mut layouter: impl Layouter<F>,
     state: &mut State<PoseidonChip::Word, T>,
     input: Option<&Absorbing<PaddedWord<F>, RATE>>,
-) -> Result<Squeezing<PoseidonChip::Word, RATE>, Error> {
+) -> Result<Squeezing<PoseidonChip::Word, RATE>, ErrorFront> {
     if let Some(input) = input {
         *state = chip.add_input(&mut layouter, state, input)?;
     }
@@ -146,7 +148,7 @@ impl<
     > Sponge<F, PoseidonChip, S, Absorbing<PaddedWord<F>, RATE>, D, T, RATE>
 {
     /// Constructs a new duplex sponge for the given Poseidon specification.
-    pub fn new(chip: PoseidonChip, mut layouter: impl Layouter<F>) -> Result<Self, Error> {
+    pub fn new(chip: PoseidonChip, mut layouter: impl Layouter<F>) -> Result<Self, ErrorFront> {
         chip.initial_state(&mut layouter).map(|state| Sponge {
             chip,
             mode: Absorbing(
@@ -166,7 +168,7 @@ impl<
         &mut self,
         mut layouter: impl Layouter<F>,
         value: PaddedWord<F>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ErrorFront> {
         for entry in self.mode.0.iter_mut() {
             if entry.is_none() {
                 *entry = Some(value);
@@ -191,8 +193,10 @@ impl<
     pub fn finish_absorbing(
         mut self,
         mut layouter: impl Layouter<F>,
-    ) -> Result<Sponge<F, PoseidonChip, S, Squeezing<PoseidonChip::Word, RATE>, D, T, RATE>, Error>
-    {
+    ) -> Result<
+        Sponge<F, PoseidonChip, S, Squeezing<PoseidonChip::Word, RATE>, D, T, RATE>,
+        ErrorFront,
+    > {
         let mode = poseidon_sponge(
             &self.chip,
             layouter.namespace(|| "PoseidonSponge"),
@@ -219,7 +223,10 @@ impl<
     > Sponge<F, PoseidonChip, S, Squeezing<PoseidonChip::Word, RATE>, D, T, RATE>
 {
     /// Squeezes an element from the sponge.
-    pub fn squeeze(&mut self, mut layouter: impl Layouter<F>) -> Result<AssignedCell<F, F>, Error> {
+    pub fn squeeze(
+        &mut self,
+        mut layouter: impl Layouter<F>,
+    ) -> Result<AssignedCell<F, F>, ErrorFront> {
         loop {
             for entry in self.mode.0.iter_mut() {
                 if let Some(inner) = entry.take() {
@@ -261,7 +268,7 @@ impl<
     > Hash<F, PoseidonChip, S, D, T, RATE>
 {
     /// Initializes a new hasher.
-    pub fn init(chip: PoseidonChip, layouter: impl Layouter<F>) -> Result<Self, Error> {
+    pub fn init(chip: PoseidonChip, layouter: impl Layouter<F>) -> Result<Self, ErrorFront> {
         Sponge::new(chip, layouter).map(|sponge| Hash { sponge })
     }
 }
@@ -280,7 +287,7 @@ impl<
         mut self,
         mut layouter: impl Layouter<F>,
         message: [AssignedCell<F, F>; L],
-    ) -> Result<AssignedCell<F, F>, Error> {
+    ) -> Result<AssignedCell<F, F>, ErrorFront> {
         for (i, value) in message
             .into_iter()
             .map(PaddedWord::Message)
