@@ -1,10 +1,11 @@
 use ff::{Field, PrimeField};
+use halo2_frontend::{dev::CircuitCost, plonk::Error};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
-    dev::{CircuitCost, MockProver},
+    dev::MockProver,
     plonk::{
         create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column,
-        ConstraintSystem, Error, Instance,
+        ConstraintSystem, Instance,
     },
     poly::{
         commitment::ParamsProver,
@@ -214,7 +215,7 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
                 &params,
                 &pk,
                 &[circuit],
-                &[&[&[output]]],
+                &[vec![vec![output]]],
                 &mut rng,
                 &mut transcript,
             )
@@ -228,35 +229,35 @@ fn bench_poseidon<S, const WIDTH: usize, const RATE: usize, const L: usize>(
         &params,
         &pk,
         &[circuit],
-        &[&[&[output]]],
+        &[vec![vec![output]]],
         &mut rng,
         &mut transcript,
     )
     .expect("proof generation should not fail");
     let proof = transcript.finalize();
 
-    let strategy = SingleStrategy::new(&params);
+    let strategy = SingleStrategy::new(&params.verifier_params());
     let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
     info!(
         "Proof {:?}",
         verify_proof::<_, VerifierSHPLONK<_>, _, _, _>(
-            &params,
+            &params.verifier_params(),
             pk.get_vk(),
             strategy,
-            &[&[&[output]]],
+            &[vec![vec![output]]],
             &mut transcript
         )
     );
 
     c.bench_function(&verifier_name, |b| {
         b.iter(|| {
-            let strategy = SingleStrategy::new(&params);
+            let strategy = SingleStrategy::new(&params.verifier_params());
             let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
             assert!(verify_proof::<_, VerifierSHPLONK<_>, _, _, _>(
-                &params,
+                &params.verifier_params(),
                 pk.get_vk(),
                 strategy,
-                &[&[&[output]]],
+                &[vec![vec![output]]],
                 &mut transcript
             )
             .is_ok());
