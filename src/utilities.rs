@@ -3,7 +3,7 @@
 use ff::{Field, PrimeField, PrimeFieldBits};
 use halo2_proofs::{
     circuit::{AssignedCell, Cell, Layouter, Value},
-    plonk::{Advice, Column, Error, Expression},
+    plonk::{Advice, Column, ErrorFront, Expression},
 };
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -58,7 +58,7 @@ pub trait UtilitiesInstructions<F: Field> {
         mut layouter: impl Layouter<F>,
         column: Column<Advice>,
         value: Value<F>,
-    ) -> Result<Self::Var, Error> {
+    ) -> Result<Self::Var, ErrorFront> {
         layouter.assign_region(
             || "load private",
             |mut region| {
@@ -242,7 +242,7 @@ mod tests {
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::{FailureLocation, MockProver, VerifyFailure},
-        plonk::{Any, Circuit, ConstraintSystem, Constraints, Error, Selector},
+        plonk::{Any, Circuit, ConstraintSystem, Constraints, Selector},
         poly::Rotation,
     };
     use halo2curves::pasta::pallas;
@@ -294,7 +294,7 @@ mod tests {
                 &self,
                 config: Self::Config,
                 mut layouter: impl Layouter<pallas::Base>,
-            ) -> Result<(), Error> {
+            ) -> Result<(), ErrorFront> {
                 layouter.assign_region(
                     || "range constrain",
                     |mut region| {
@@ -329,7 +329,10 @@ mod tests {
                         region: (0, "range constrain").into(),
                         offset: 0,
                     },
-                    cell_values: vec![(((Any::advice(), 0).into(), 0).into(), "0x8".to_string())],
+                    cell_values: vec![(
+                        (Column::new(0, Any::Advice).into(), 0).into(),
+                        "0x8".to_string()
+                    )],
                 }])
             );
         }

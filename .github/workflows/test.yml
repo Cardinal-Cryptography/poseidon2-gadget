@@ -21,9 +21,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - name: Install Rust toolchain
+        uses: Cardinal-Cryptography/github-actions/install-rust-toolchain@v7
         with:
-          override: false
+          channel: nightly
+
       - name: Run tests
         uses: actions-rs/cargo@v1
         with:
@@ -32,9 +34,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - name: Install Rust toolchain
+        uses: Cardinal-Cryptography/github-actions/install-rust-toolchain@v7
         with:
-          override: false
+          channel: nightly
+
       - name: Add target
         run: rustup target add ${{ matrix.target }}
       - name: cargo build
@@ -45,13 +49,15 @@ jobs:
 
   bitrot:
     name: Bitrot check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - name: Install Rust toolchain
+        uses: Cardinal-Cryptography/github-actions/install-rust-toolchain@v7
         with:
-          override: false
+          channel: nightly
+
       # Build benchmarks to prevent bitrot
       - name: Build benchmarks
         uses: actions-rs/cargo@v1
